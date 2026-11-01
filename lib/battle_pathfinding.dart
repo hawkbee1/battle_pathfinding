@@ -8,3 +8,4 @@ library;
 
 export 'src/navigation_fixture.dart';
 export 'src/navigation_map.dart';
+export 'src/path_search.dart';
