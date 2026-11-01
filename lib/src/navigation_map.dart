@@ -109,7 +109,8 @@ final class NavigationMap {
     this.objects = const {},
     this.constructions = const {},
     this.links = const [],
-  }) {
+    this.craters = const [],
+  }) : _craterDepths = _sampleCraters(craters, cellSizeM, width, depth) {
     if (ground.length != width * depth) {
       throw ArgumentError.value(
         ground.length,
@@ -146,6 +147,13 @@ final class NavigationMap {
   /// Bridges and ladders between cells.
   final List<SurfaceLink> links;
 
+  /// Craters dug into the ground during the battle (delta-layer entries,
+  /// MAP-06, MAP-07). The base heights in [ground] never change.
+  final List<Crater> craters;
+
+  /// How deep the craters make each ground cell, by column and row.
+  final Map<(int, int), double> _craterDepths;
+
   /// The cell [ref]; null when the map has no such cell.
   NavCell? cellAt(CellRef ref) {
     if (ref.surface != groundSurface) {
@@ -154,7 +162,11 @@ final class NavigationMap {
     if (ref.x < 0 || ref.y < 0 || ref.x >= width || ref.y >= depth) {
       return null;
     }
-    return ground[ref.y * width + ref.x];
+    final cell = ground[ref.y * width + ref.x];
+    final dug = _craterDepths[(ref.x, ref.y)];
+    return dug == null
+        ? cell
+        : NavCell(height: cell.height - dug, terrain: cell.terrain);
   }
 
   /// Whether [ref] is a water cell: a river or a lake (MAP-22).
@@ -203,4 +215,80 @@ final class NavigationMap {
       }
     }
   }
+}
+
+/// {@template crater}
+/// A crater on the ground (stack decision 5): its centre, in metres from
+/// the map's north-west corner, its radius and its depth, in metres. It is
+/// sampled on the cells whose centre it covers, as a bowl:
+/// `depth × (1 − (distance / radius)²)` (Q-MAP-17).
+/// {@endtemplate}
+final class Crater {
+  /// {@macro crater}
+  const new({
+    required this.centreXM,
+    required this.centreYM,
+    required this.radiusM,
+    required this.depthM,
+  });
+
+  /// East of the map's west edge, in metres.
+  final double centreXM;
+
+  /// South of the map's north edge, in metres.
+  final double centreYM;
+
+  /// Its radius, in metres.
+  final double radiusM;
+
+  /// Its depth at the centre, in metres.
+  final double depthM;
+
+  /// How deep it is at the centre of the cell at [x], [y] of [cellSizeM]
+  /// metres; 0 outside it.
+  double depthAt(int x, int y, double cellSizeM) {
+    final dx = (x + 0.5) * cellSizeM - centreXM;
+    final dy = (y + 0.5) * cellSizeM - centreYM;
+    final share = (dx * dx + dy * dy) / (radiusM * radiusM);
+    return share >= 1 ? 0 : depthM * (1 - share);
+  }
+
+  /// The ground cells whose centre it covers.
+  Iterable<(int, int)> cells(double cellSizeM, int width, int depth) sync* {
+    final reach = (radiusM / cellSizeM).ceil();
+    final cx = (centreXM / cellSizeM).floor();
+    final cy = (centreYM / cellSizeM).floor();
+    for (
+      var y = math.max(0, cy - reach);
+      y <= math.min(depth - 1, cy + reach);
+      y++
+    ) {
+      for (
+        var x = math.max(0, cx - reach);
+        x <= math.min(width - 1, cx + reach);
+        x++
+      ) {
+        if (depthAt(x, y, cellSizeM) > 0) yield (x, y);
+      }
+    }
+  }
+}
+
+/// Where craters overlap, the deepest one counts (Q-MAP-17).
+Map<(int, int), double> _sampleCraters(
+  List<Crater> craters,
+  double cellSizeM,
+  int width,
+  int depth,
+) {
+  final depths = <(int, int), double>{};
+  for (final crater in craters) {
+    for (final cell in crater.cells(cellSizeM, width, depth)) {
+      depths[cell] = math.max(
+        depths[cell] ?? 0,
+        crater.depthAt(cell.$1, cell.$2, cellSizeM),
+      );
+    }
+  }
+  return Map.unmodifiable(depths);
 }
