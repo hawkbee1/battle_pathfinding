@@ -1,61 +1,63 @@
-# Battle Pathfinding
+# battle_pathfinding
 
 [![style: very good analysis][very_good_analysis_badge]][very_good_analysis_link]
-[![Powered by Mason](https://img.shields.io/endpoint?url=https%3A%2F%2Ftinyurl.com%2Fmason-badge)](https://github.com/felangel/mason)
 [![License: MIT][license_badge]][license_link]
 
-Headless pathfinding of Battle Team (cheapest path in AP for every movement class), pure Dart.
+The headless **pathfinding** of Battle Team, a 3D, massive, persistent, real-time team
+battle game. It finds the cheapest path in AP for every movement class and profile,
+and for pushed relics and the moving HQ, on the battle map. It returns each path as
+the samples the rules core ([battle_rules](https://github.com/hawkbee1/battle_rules))
+takes as input: terrain type, signed slope in degrees, length in metres.
 
-## Installation 💻
+- **Pure Dart**: no Flutter, no rendering, no network.
+- **No I/O in `lib/`**: the caller passes the navigation model and the movement
+  cost. Only command-line tools in `bin/` may read files.
+- **Injected movement cost**: a function of the unit's AP per metre, the movement
+  class or profile, the terrain type and the signed slope. Tests use fixture maps
+  and fixture costs; this package never reads the game data. A caller wires in the
+  real cost from `battle_rules`, so the two packages do not depend on each other.
+- **Deterministic**: no wall clock, no unseeded randomness, no global state.
 
-**❗ In order to start using Battle Pathfinding you must have the [Dart SDK][dart_install_link] installed on your machine.**
+## Part of hawkbee
 
-Install via `dart pub add`:
-
-```sh
-dart pub add battle_pathfinding
-```
-
----
-
-## Continuous Integration 🤖
-
-Battle Pathfinding comes with a built-in [GitHub Actions workflow][github_actions_link] powered by [Very Good Workflows][very_good_workflows_link] but you can also add your preferred CI/CD solution.
-
-Out of the box, on each pull request and push, the CI `formats`, `lints`, and `tests` the code. This ensures the code remains consistent and behaves correctly as you add functionality or make changes. The project uses [Very Good Analysis][very_good_analysis_link] for a strict set of analysis options used by our team. Code coverage is enforced using the [Very Good Workflows][very_good_workflows_link].
-
----
-
-## Running Tests 🧪
-
-To run all unit tests:
+This repository is a git submodule of the
+[hawkbee](https://github.com/hawkbee1/hawkbee) monorepo and **only builds inside
+it** (pub workspace, `resolution: workspace`):
 
 ```sh
-dart pub global activate coverage 1.15.0
-dart test --coverage=coverage
-dart pub global run coverage:format_coverage --lcov --in=coverage --out=coverage/lcov.info
+git clone --recurse-submodules https://github.com/hawkbee1/hawkbee.git
+cd hawkbee && flutter pub get
 ```
 
-To view the generated coverage report you can use [lcov](https://github.com/linux-test-project/lcov).
+## Specification
+
+The rules live in the Battle Team app repository, mounted in hawkbee at
+`apps/battle_team/plan/`:
+
+| Path | Content |
+|---|---|
+| [`plan/milestones/m3-pathfinding.md`](https://github.com/hawkbee1/battle_team/blob/main/plan/milestones/m3-pathfinding.md) | The milestone this package implements, one issue per work session. |
+| [`plan/specs/`](https://github.com/hawkbee1/battle_team/tree/main/plan/specs) | The rules, each with a stable ID (`MAP-16`, `MAP-22`, ...). Code and tests cite these IDs. |
+| [`plan/stack/05-map-format.md`](https://github.com/hawkbee1/battle_team/blob/main/plan/stack/05-map-format.md) | The map format the navigation model is built from. |
+| [`plan/stack/07-engineering-principles.md`](https://github.com/hawkbee1/battle_team/blob/main/plan/stack/07-engineering-principles.md) | Principles, patterns and package layout. |
+
+Work sessions: hawkbee's [docs/battle_team](https://github.com/hawkbee1/hawkbee/tree/main/docs/battle_team).
+
+## Running tests
+
+From the package folder, inside a hawkbee checkout:
 
 ```sh
-# Generate Coverage Report
-genhtml coverage/lcov.info -o coverage/
-
-# Open Coverage Report
-open coverage/index.html
+very_good test --coverage
 ```
 
-[dart_install_link]: https://dart.dev/get-dart
-[github_actions_link]: https://docs.github.com/en/actions/learn-github-actions
+The target is 100 % line coverage. Static analysis:
+
+```sh
+dart analyze --fatal-infos
+```
+
 [license_badge]: https://img.shields.io/badge/license-MIT-blue.svg
 [license_link]: https://opensource.org/licenses/MIT
-[logo_black]: https://raw.githubusercontent.com/VGVentures/very_good_brand/main/styles/README/vgv_logo_black.png#gh-light-mode-only
-[logo_white]: https://raw.githubusercontent.com/VGVentures/very_good_brand/main/styles/README/vgv_logo_white.png#gh-dark-mode-only
-[mason_link]: https://github.com/felangel/mason
 [very_good_analysis_badge]: https://img.shields.io/badge/style-very_good_analysis-B22C89.svg
 [very_good_analysis_link]: https://pub.dev/packages/very_good_analysis
-[very_good_ventures_link]: https://verygood.ventures
-[very_good_ventures_link_light]: https://verygood.ventures#gh-light-mode-only
-[very_good_ventures_link_dark]: https://verygood.ventures#gh-dark-mode-only
-[very_good_workflows_link]: https://github.com/VeryGoodOpenSource/very_good_workflows
