@@ -1,5 +1,5 @@
 /// {@template battle_pathfinding}
-/// Headless pathfinding of Battle Team (cheapest path in AP for every movement class), pure Dart.
+/// Entry point of the Battle Team pathfinding.
 /// {@endtemplate}
 class BattlePathfinding {
   /// {@macro battle_pathfinding}
