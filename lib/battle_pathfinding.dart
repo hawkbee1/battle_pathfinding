@@ -6,7 +6,9 @@
 /// movement cost.
 library;
 
+export 'src/ground_search.dart';
 export 'src/navigation_fixture.dart';
 export 'src/navigation_map.dart';
 export 'src/path_search.dart';
+export 'src/synthetic_map.dart';
 export 'src/world_change.dart';

@@ -98,19 +98,49 @@ final class NavigationMap {
   /// {@macro navigation_map}
   ///
   /// Throws an [ArgumentError] when [ground] does not hold [width] ×
-  /// [depth] cells.
+  /// [depth] cells or a link has an end off the map. The objects,
+  /// constructions and links are kept as unmodifiable copies; [ground] is
+  /// kept as given and must not change.
   new({
+    required double cellSizeM,
+    required int width,
+    required int depth,
+    required List<NavCell> ground,
+    required Set<String> waterTerrains,
+    Map<String, Map<(int, int), NavCell>> islands = const {},
+    Map<CellRef, Set<String>> objects = const {},
+    Map<CellRef, Set<String>> constructions = const {},
+    List<SurfaceLink> links = const [],
+    List<Crater> craters = const [],
+  }) : this._(
+         cellSizeM: cellSizeM,
+         width: width,
+         depth: depth,
+         ground: ground,
+         waterTerrains: waterTerrains,
+         islands: islands,
+         objects: objects,
+         constructions: constructions,
+         links: links,
+         craters: craters,
+         craterDepths: _sampleCraters(craters, cellSizeM, width, depth),
+       );
+
+  new _({
     required this.cellSizeM,
     required this.width,
     required this.depth,
     required this.ground,
     required this.waterTerrains,
-    this.islands = const {},
-    this.objects = const {},
-    this.constructions = const {},
-    this.links = const [],
-    this.craters = const [],
-  }) : _craterDepths = _sampleCraters(craters, cellSizeM, width, depth) {
+    required this.islands,
+    required Map<CellRef, Set<String>> objects,
+    required Map<CellRef, Set<String>> constructions,
+    required List<SurfaceLink> links,
+    required this.craters,
+    required this._craterDepths,
+  }) : objects = Map.unmodifiable(objects),
+       constructions = Map.unmodifiable(constructions),
+       links = List.unmodifiable(links) {
     if (ground.length != width * depth) {
       throw ArgumentError.value(
         ground.length,
@@ -118,6 +148,56 @@ final class NavigationMap {
         'must hold width × depth = ${width * depth} cells',
       );
     }
+    for (final link in links) {
+      if (cellAt(link.from) == null || cellAt(link.to) == null) {
+        throw ArgumentError.value(link, 'links', 'an end is off the map');
+      }
+    }
+  }
+
+  /// This map with other [objects], [constructions] or [links]; the rest,
+  /// craters included, is kept.
+  NavigationMap copyWith({
+    Map<CellRef, Set<String>>? objects,
+    Map<CellRef, Set<String>>? constructions,
+    List<SurfaceLink>? links,
+  }) => NavigationMap._(
+    cellSizeM: cellSizeM,
+    width: width,
+    depth: depth,
+    ground: ground,
+    waterTerrains: waterTerrains,
+    islands: islands,
+    objects: objects ?? this.objects,
+    constructions: constructions ?? this.constructions,
+    links: links ?? this.links,
+    craters: craters,
+    craterDepths: _craterDepths,
+  );
+
+  /// This map with [crater] dug: only the cells it covers are sampled
+  /// again.
+  NavigationMap withCrater(Crater crater) {
+    final depths = Map<(int, int), double>.of(_craterDepths);
+    for (final cell in crater.cells(cellSizeM, width, depth)) {
+      depths[cell] = math.max(
+        depths[cell] ?? 0,
+        crater.depthAt(cell.$1, cell.$2, cellSizeM),
+      );
+    }
+    return NavigationMap._(
+      cellSizeM: cellSizeM,
+      width: width,
+      depth: depth,
+      ground: ground,
+      waterTerrains: waterTerrains,
+      islands: islands,
+      objects: objects,
+      constructions: constructions,
+      links: links,
+      craters: List.unmodifiable([...craters, crater]),
+      craterDepths: Map.unmodifiable(depths),
+    );
   }
 
   /// The side of a cell, in metres (10 m in stack decision 5).
@@ -207,14 +287,31 @@ final class NavigationMap {
   }
 
   /// The links that start or end at [ref], each as seen from [ref].
-  Iterable<SurfaceLink> linksFrom(CellRef ref) sync* {
+  Iterable<SurfaceLink> linksFrom(CellRef ref) => _linksByCell[ref] ?? const [];
+
+  late final Map<CellRef, List<SurfaceLink>> _linksByCell = () {
+    final byCell = <CellRef, List<SurfaceLink>>{};
     for (final link in links) {
-      if (link.from == ref) yield link;
-      if (link.to == ref) {
-        yield SurfaceLink(kind: link.kind, from: ref, to: link.from);
+      byCell.putIfAbsent(link.from, () => []).add(link);
+      byCell
+          .putIfAbsent(link.to, () => [])
+          .add(SurfaceLink(kind: link.kind, from: link.to, to: link.from));
+    }
+    return byCell;
+  }();
+
+  /// The floating islands that have a cell at column [x] and row [y].
+  List<String> islandsAt(int x, int y) => _islandsAt[(x, y)] ?? const [];
+
+  late final Map<(int, int), List<String>> _islandsAt = () {
+    final byPosition = <(int, int), List<String>>{};
+    for (final MapEntry(key: name, value: cells) in islands.entries) {
+      for (final position in cells.keys) {
+        byPosition.putIfAbsent(position, () => []).add(name);
       }
     }
-  }
+    return byPosition;
+  }();
 }
 
 /// {@template crater}
