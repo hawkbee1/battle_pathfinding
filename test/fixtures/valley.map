@@ -1,0 +1,27 @@
+# A valley: a river with a bridge, a forest, a town, a mountain, a lake, a
+# road, and a floating island reached by a ladder and a bridge.
+cell 10
+water river lake
+legend g grass
+legend f forest_floor tree
+legend ~ river
+legend o lake
+legend t town_street
+legend b town_street building
+legend w grass wall
+legend m mountain
+legend r road
+terrain
+  r r ~ r t b
+  g f ~ g t t
+  f f ~ g w m
+  o o g g m m
+heights
+  0 0 0 0 0 0
+  0 1 0 1 1 1
+  1 2 0 2 3 20
+  0 0 1 5 25 40
+island sky 60 floating_island_ground 4,0 5,0 4,1
+build bridge 2,0
+link ladder 3,0 sky:4,0
+link bridge 3,1 sky:4,1

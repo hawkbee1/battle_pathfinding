@@ -6,4 +6,5 @@
 /// movement cost.
 library;
 
-export 'src/battle_pathfinding.dart';
+export 'src/navigation_fixture.dart';
+export 'src/navigation_map.dart';
