@@ -175,7 +175,8 @@ void main() {
     const top = CellRef(0, 0, surface: 'sky');
     const below = CellRef(2, 0);
 
-    test('RELIC-22 a relic pushed over an island edge falls to the ground', () {
+    test('RELIC-22 MAP-39 a relic pushed over an island edge falls to the '
+        'ground next to it, for free', () {
       final path = _find(map, _relic, top, below)!;
 
       expect(path.cells, [top, const CellRef(1, 0, surface: 'sky'), below]);
@@ -184,7 +185,7 @@ void main() {
       expect(path.cost, closeTo(100, 1e-9));
     });
 
-    test('HQ-48 the HQ falls too', () {
+    test('HQ-48 MAP-39 the HQ falls too', () {
       expect(_find(map, _hq, top, below)?.falls, [below]);
     });
 

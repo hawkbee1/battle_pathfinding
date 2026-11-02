@@ -47,7 +47,7 @@ FoundPath? _ground(
 
 void main() {
   group('diagonal steps', () {
-    test('RELIC-28 a relic in a diamond of walls cannot slip between their '
+    test('RELIC-28 MAP-47 a relic in a diamond of walls cannot slip between '
         'corners', () {
       final map = _map(['g w g', 'w g w', 'g w g']);
 
@@ -61,20 +61,23 @@ void main() {
       );
     });
 
-    test('MAP-22 a foot unit does not cross a river at a diagonal bend', () {
-      final map = _map(['g ~', '~ g']);
+    test(
+      'MAP-22 MAP-47 a foot unit does not cross a river at a diagonal bend',
+      () {
+        final map = _map(['g ~', '~ g']);
 
-      expect(
-        _find(map, _foot, const CellRef(0, 0), const CellRef(1, 1)),
-        isNull,
-      );
-      expect(
-        _ground(map, _foot, const CellRef(0, 0), const CellRef(1, 1)),
-        isNull,
-      );
-    });
+        expect(
+          _find(map, _foot, const CellRef(0, 0), const CellRef(1, 1)),
+          isNull,
+        );
+        expect(
+          _ground(map, _foot, const CellRef(0, 0), const CellRef(1, 1)),
+          isNull,
+        );
+      },
+    );
 
-    test('MAP-19 a boat does not cross a diagonal strip of land', () {
+    test('MAP-19 MAP-47 a boat does not cross a diagonal strip of land', () {
       final map = _map(['o g', 'g o']);
 
       expect(
@@ -172,7 +175,7 @@ void main() {
   });
 
   group('links and falls meet blocking objects', () {
-    test('Q-MAP-14 a wall at the top of a ladder stops the climb', () {
+    test('MAP-44 a wall at the top of a ladder stops the climb', () {
       final live = LivePathfinder(
         map: _map([
           'g g',
@@ -192,7 +195,7 @@ void main() {
       );
     });
 
-    test('Q-MAP-16 a relic does not fall onto a wall', () {
+    test('MAP-39 a relic does not fall onto a wall', () {
       final live = LivePathfinder(
         map: _map(['g g g'], extra: 'island sky 20 grass 0,0 1,0'),
         cost: fixtureCost,

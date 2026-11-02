@@ -9,7 +9,8 @@ import 'package:battle_pathfinding/src/path_search.dart';
 /// 1,000 × 5,000 cells of 10 m.
 ///
 /// It prices steps exactly as [Pathfinder] does (half a step on each
-/// cell's terrain, the cheapest mode per half), with typed arrays and
+/// cell's terrain, the cheapest mode per half, no cutting corners: MAP-41,
+/// MAP-47), with typed arrays and
 /// memoized costs. [exact] searches the whole ground; [fast] first finds a
 /// path over blocks of cells, then searches only a corridor around it. Both
 /// return paths through [Pathfinder.check], so their cost and samples are

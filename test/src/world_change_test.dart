@@ -141,8 +141,8 @@ void main() {
       expect(_across(live, _foot), isNull);
     });
 
-    test('a crater is a bowl sampled on the cells it covers; the deepest '
-        'crater counts', () {
+    test('MAP-46 a crater is a bowl sampled on the cells it covers; the '
+        'deepest crater counts', () {
       const crater = Crater(centreXM: 15, centreYM: 5, radiusM: 10, depthM: 4);
 
       expect(crater.depthAt(1, 0, 10), 4);
@@ -168,6 +168,18 @@ void main() {
         );
       expect(live.map.cellAt(const CellRef(1, 0))?.height, -4);
       expect(live.map.craters, hasLength(2));
+    });
+
+    test('MAP-46 a crater digs the ground, never a floating island', () {
+      final live = _live(_row('g g', extra: 'island sky 30 grass 1,0'))
+        ..apply(
+          const CraterDug(
+            Crater(centreXM: 15, centreYM: 5, radiusM: 10, depthM: 4),
+          ),
+        );
+
+      expect(live.map.cellAt(const CellRef(1, 0))?.height, -4);
+      expect(live.map.cellAt(const CellRef(1, 0, surface: 'sky'))?.height, 30);
     });
 
     test('MAP-06 MAP-09 changes sit on top of the authored map: the base '

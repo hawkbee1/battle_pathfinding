@@ -318,7 +318,7 @@ final class NavigationMap {
 /// A crater on the ground (stack decision 5): its centre, in metres from
 /// the map's north-west corner, its radius and its depth, in metres. It is
 /// sampled on the cells whose centre it covers, as a bowl:
-/// `depth × (1 − (distance / radius)²)` (Q-MAP-17).
+/// `depth × (1 − (distance / radius)²)` (MAP-46).
 /// {@endtemplate}
 final class Crater {
   /// {@macro crater}
@@ -371,7 +371,7 @@ final class Crater {
   }
 }
 
-/// Where craters overlap, the deepest one counts (Q-MAP-17).
+/// Where craters overlap, the deepest one counts (MAP-46).
 Map<(int, int), double> _sampleCraters(
   List<Crater> craters,
   double cellSizeM,
