@@ -2,10 +2,16 @@ import 'dart:math' as math;
 
 /// AP multipliers per terrain and mode; a missing mode is impassable.
 const fixtureMultipliers = <String, Map<String, double>>{
-  'grass': {'foot': 1, 'wheeled': 1, 'tracked': 1, 'flying': 0.5},
-  'road': {'foot': 0.5, 'wheeled': 0.25, 'tracked': 0.5, 'flying': 0.5},
+  'grass': {'foot': 1, 'wheeled': 1, 'tracked': 1, 'flying': 0.5, 'push': 1},
+  'road': {
+    'foot': 0.5,
+    'wheeled': 0.25,
+    'tracked': 0.5,
+    'flying': 0.5,
+    'push': 0.5,
+  },
   'forest_floor': {'foot': 2, 'tracked': 3, 'flying': 0.5},
-  'mud': {'foot': 2, 'wheeled': 4, 'tracked': 2, 'flying': 0.5},
+  'mud': {'foot': 2, 'wheeled': 4, 'tracked': 2, 'flying': 0.5, 'push': 3},
   'mountain': {'foot': 3, 'flying': 0.5},
   'town_street': {'foot': 1, 'wheeled': 1, 'tracked': 1, 'flying': 0.5},
   'river': {'sail': 1, 'flying': 0.5},
@@ -15,6 +21,7 @@ const fixtureMultipliers = <String, Map<String, double>>{
     'wheeled': 1,
     'tracked': 1,
     'flying': 0.5,
+    'push': 1,
   },
 };
 
@@ -25,6 +32,7 @@ const fixtureSlopes = <String, (double, double, double)>{
   'tracked': (0.07, 35, 0.5),
   'flying': (0, 90, 1),
   'sail': (0, 90, 1),
+  'push': (0.07, 35, 0.5),
 };
 
 /// A fixture movement cost with the shape of the rules core's (M4 Issue

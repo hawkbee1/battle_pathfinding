@@ -68,10 +68,13 @@ final class PathMover {
 final class PathRules {
   /// {@macro path_rules}
   const new({
-    this.groundModes = const {'foot', 'wheeled', 'tracked'},
+    this.groundModes = const {'foot', 'wheeled', 'tracked', 'push'},
     this.ladderModes = const {'foot'},
+    this.reinforcedOnlyModes = const {'push'},
+    this.fallModes = const {'push'},
     this.flyingMode = 'flying',
     this.bridgeConstructions = const {'bridge', 'reinforced_bridge'},
+    this.reinforcedBridgeConstruction = 'reinforced_bridge',
     this.bridgeTerrain = 'road',
     this.roadConstruction = 'road',
     this.roadTerrain = 'road',
@@ -79,18 +82,30 @@ final class PathRules {
     this.altitudeLimitM = double.infinity,
   });
 
-  /// The ground movement classes: they use bridges and are stopped by
-  /// blocking objects.
+  /// The ground movement classes and the `push` profile: they use bridges
+  /// and roads, and are stopped by blocking objects.
   final Set<String> groundModes;
 
   /// The modes that climb ladders: foot units only.
   final Set<String> ladderModes;
+
+  /// The modes that cross water and reach islands only on reinforced
+  /// bridges: pushed relics and the moving HQ (RELIC-26, HQ-11).
+  final Set<String> reinforcedOnlyModes;
+
+  /// The modes that can go over a floating island's edge and fall: pushed
+  /// relics and the moving HQ (RELIC-22, HQ-48).
+  final Set<String> fallModes;
 
   /// The flying profile: it ignores objects and changes surface freely.
   final String flyingMode;
 
   /// Constructions that let ground classes cross a water cell (MAP-23).
   final Set<String> bridgeConstructions;
+
+  /// The construction that carries relics and the HQ over water
+  /// (decision 99).
+  final String reinforcedBridgeConstruction;
 
   /// The terrain a bridge deck is priced as.
   final String bridgeTerrain;
@@ -110,12 +125,18 @@ final class PathRules {
 }
 
 /// {@template found_path}
-/// A path: the [cells] it visits, from start to goal, its [samples] and
-/// its [cost] in AP, the sum of its samples under the cost.
+/// A path: the [cells] it visits, from start to goal, its [samples], its
+/// [cost] in AP (the sum of its samples under the cost), and the cells
+/// where it lands after falling from an island's edge ([falls]).
 /// {@endtemplate}
 final class FoundPath {
   /// {@macro found_path}
-  const new({required this.cells, required this.samples, required this.cost});
+  const new({
+    required this.cells,
+    required this.samples,
+    required this.cost,
+    this.falls = const [],
+  });
 
   /// The cells visited, start and goal included.
   final List<CellRef> cells;
@@ -125,6 +146,10 @@ final class FoundPath {
 
   /// Its AP cost.
   final double cost;
+
+  /// The ground cells it lands on after going over an island's edge
+  /// (RELIC-22, HQ-48).
+  final List<CellRef> falls;
 }
 
 /// Why a step of a path check fails.
@@ -146,17 +171,20 @@ sealed class PathCheck {
 }
 
 /// {@template path_passes}
-/// The path is valid: its [cost] and [samples].
+/// The path is valid: its [cost], [samples] and [falls].
 /// {@endtemplate}
 final class PathPasses extends PathCheck {
   /// {@macro path_passes}
-  const new({required this.cost, required this.samples});
+  const new({required this.cost, required this.samples, this.falls = const []});
 
   /// Its AP cost.
   final double cost;
 
   /// The path as samples.
   final List<PathSample> samples;
+
+  /// The ground cells it lands on after a fall.
+  final List<CellRef> falls;
 }
 
 /// {@template path_fails}
@@ -223,8 +251,10 @@ final class Pathfinder {
     if (total == null) return null;
     final cells = <CellRef>[to];
     final steps = <_Step>[];
+    final falls = <CellRef>[];
     for (var cell = to; cell != from;) {
       final (before, step) = previous[cell]!;
+      if (step.fall) falls.add(cell);
       cells.add(before);
       steps.add(step);
       cell = before;
@@ -235,6 +265,7 @@ final class Pathfinder {
         for (final step in steps.reversed) ...step.samples,
       ]),
       cost: total,
+      falls: List.unmodifiable(falls.reversed),
     );
   }
 
@@ -249,6 +280,7 @@ final class Pathfinder {
     }
     var total = 0.0;
     final samples = <PathSample>[];
+    final falls = <CellRef>[];
     for (var index = 1; index < path.length; index++) {
       final from = path[index - 1];
       final to = path[index];
@@ -262,8 +294,13 @@ final class Pathfinder {
       }
       total += step.cost;
       samples.addAll(step.samples);
+      if (step.fall) falls.add(to);
     }
-    return PathPasses(cost: total, samples: List.unmodifiable(samples));
+    return PathPasses(
+      cost: total,
+      samples: List.unmodifiable(samples),
+      falls: List.unmodifiable(falls),
+    );
   }
 
   /// Every step [mover] can make from [cell].
@@ -272,6 +309,7 @@ final class Pathfinder {
       for (final next in map.neighbours(cell)) (next, null),
       for (final link in map.linksFrom(cell)) (link.to, link),
       for (final next in _otherSurfaces(cell)) (next, null),
+      for (final next in _edgesBelow(cell)) (next, null),
     ];
     for (final (next, link) in targets) {
       final step = _cheapestStep(mover, cell, next, link);
@@ -286,12 +324,25 @@ final class Pathfinder {
       if (surface != cell.surface) CellRef(cell.x, cell.y, surface: surface),
   ].where((other) => map.cellAt(other) != null);
 
+  /// The ground cells next to an island cell that the island does not
+  /// cover: going there is going over the island's edge.
+  Iterable<CellRef> _edgesBelow(CellRef cell) sync* {
+    if (cell.surface == groundSurface) return;
+    final island = map.islands[cell.surface]!;
+    for (var dy = -1; dy <= 1; dy++) {
+      for (var dx = -1; dx <= 1; dx++) {
+        final x = cell.x + dx;
+        final y = cell.y + dy;
+        final below = CellRef(x, y);
+        if (!island.containsKey((x, y)) && map.cellAt(below) != null) {
+          yield below;
+        }
+      }
+    }
+  }
+
   bool _adjacent(CellRef from, CellRef to) =>
-      (from.surface == to.surface &&
-          (from.x - to.x).abs() <= 1 &&
-          (from.y - to.y).abs() <= 1 &&
-          from != to) ||
-      (from.surface != to.surface && from.x == to.x && from.y == to.y);
+      (from.x - to.x).abs() <= 1 && (from.y - to.y).abs() <= 1 && from != to;
 
   SurfaceLink? _linkBetween(CellRef from, CellRef to) {
     for (final link in map.linksFrom(from)) {
@@ -310,6 +361,11 @@ final class Pathfinder {
     CellRef to,
     SurfaceLink? link,
   ) {
+    if (link == null &&
+        from.surface != to.surface &&
+        (from.x != to.x || from.y != to.y)) {
+      return _fall(mover, from, to);
+    }
     if (link != null || from.surface != to.surface) {
       _Step? cheapest;
       for (final mode in mover.modes) {
@@ -379,11 +435,27 @@ final class Pathfinder {
       ]);
     }
     if (!rules.groundModes.contains(mode)) return null;
+    if (rules.reinforcedOnlyModes.contains(mode) &&
+        link.kind != LinkKind.reinforcedBridge) {
+      return null;
+    }
     final run =
         math.sqrt(math.pow(to.x - from.x, 2) + math.pow(to.y - from.y, 2)) *
         map.cellSizeM;
     final slope = math.atan2(end.height - start.height, run) * 180 / math.pi;
     return _priced(apPerM, mode, [(rules.bridgeTerrain, slope, run)]);
+  }
+
+  /// Going over an island's edge from [from] onto the ground cell [to]:
+  /// only a mode that can fall does it; the fall is free (Q-MAP-16).
+  _Step? _fall(PathMover mover, CellRef from, CellRef to) {
+    final edge =
+        from.surface != groundSurface &&
+        to.surface == groundSurface &&
+        !map.islands[from.surface]!.containsKey((to.x, to.y));
+    return edge && mover.modes.any(rules.fallModes.contains)
+        ? const _Step(cost: 0, samples: [], fall: true)
+        : null;
   }
 
   /// A flyer going up to or down from an island at the same column and
@@ -427,8 +499,11 @@ final class Pathfinder {
   String _terrain(CellRef ref, NavCell cell, String mode) {
     if (!rules.groundModes.contains(mode)) return cell.terrain;
     final built = map.constructionsAt(ref);
-    if (map.isWater(ref) && built.any(rules.bridgeConstructions.contains)) {
-      return rules.bridgeTerrain;
+    if (map.isWater(ref)) {
+      final bridged = rules.reinforcedOnlyModes.contains(mode)
+          ? built.contains(rules.reinforcedBridgeConstruction)
+          : built.any(rules.bridgeConstructions.contains);
+      return bridged ? rules.bridgeTerrain : cell.terrain;
     }
     if (built.contains(rules.roadConstruction)) return rules.roadTerrain;
     return cell.terrain;
@@ -437,10 +512,11 @@ final class Pathfinder {
 
 /// One step: its AP cost and its samples.
 final class _Step {
-  const new({required this.cost, required this.samples});
+  const new({required this.cost, required this.samples, this.fall = false});
 
   final double cost;
   final List<PathSample> samples;
+  final bool fall;
 }
 
 /// A binary min-heap of cells by AP spent.
