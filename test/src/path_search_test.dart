@@ -109,6 +109,23 @@ void main() {
       }
     }
 
+    test(
+      'MAP-41 a step between two terrains pays each for half its length',
+      () {
+        final path = _finder(_row('g d')).find(
+          mover: _foot,
+          from: const CellRef(0, 0),
+          to: const CellRef(1, 0),
+        )!;
+
+        expect(
+          [for (final s in path.samples) (s.terrainType, s.lengthM)],
+          [('grass', 5.0), ('mud', 5.0)],
+        );
+        expect(path.cost, closeTo(5 * 1 + 5 * 2, 1e-9));
+      },
+    );
+
     test('COMBAT-03 the cost scales with the mover AP per metre', () {
       final path = _finder(_row('g d g')).find(
         mover: const PathMover(apPerM: 0.2, modes: ['tracked']),
@@ -175,7 +192,7 @@ void main() {
       }
     });
 
-    test('MAP-25 a bridge carries ground units over water', () {
+    test('MAP-25 MAP-42 a bridge carries ground units over water', () {
       final map = _row('g ~ g', extra: 'build bridge 1,0');
       final path = _finder(map).find(
         mover: _wheeled,
@@ -309,14 +326,17 @@ void main() {
   });
 
   group('objects and islands', () {
-    test('intact walls and buildings stop ground units; trees do not', () {
-      expect(_crossing('w', _foot), isNull);
-      expect(_crossing('b', _wheeled), isNull);
-      expect(_crossing('T', _foot), closeTo(10 + 20, 1e-9));
-    });
+    test(
+      'MAP-44 intact walls and buildings stop ground units; trees do not',
+      () {
+        expect(_crossing('w', _foot), isNull);
+        expect(_crossing('b', _wheeled), isNull);
+        expect(_crossing('T', _foot), closeTo(10 + 20, 1e-9));
+      },
+    );
 
-    test('MAP-36 MAP-37 foot units climb a ladder of any height to an '
-        'island; wheels and tracks cannot', () {
+    test('MAP-36 MAP-37 MAP-43 foot units climb a ladder of any height to '
+        'an island and down again; wheels and tracks cannot', () {
       final map = _row(
         'g g',
         extra:
@@ -332,6 +352,10 @@ void main() {
         to: island,
       )!;
       expect(climb.cost, closeTo(10 + 500, 1e-9));
+      expect(
+        finder.find(mover: _foot, from: island, to: const CellRef(0, 0))!.cost,
+        closeTo(500 + 10, 1e-9),
+      );
       expect(
         finder.find(mover: _wheeled, from: const CellRef(0, 0), to: island),
         isNull,
@@ -375,7 +399,7 @@ void main() {
       expect(path.cost, closeTo(30 * 0.25, 1e-9));
     });
 
-    test('MAP-36 a flyer reaches an island', () {
+    test('MAP-36 MAP-45 a flyer reaches an island; going up is free', () {
       final map = _row(
         'g g',
         extra: 'island sky 40 floating_island_ground 1,0',

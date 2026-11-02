@@ -63,8 +63,7 @@ final class PathMover {
 
 /// {@template path_rules}
 /// How the map's objects, constructions and links are crossed. The
-/// defaults follow the specs and the assumptions recorded in M3.3's
-/// session log.
+/// defaults follow the specs (MAP-39, MAP-41 to MAP-47).
 /// {@endtemplate}
 final class PathRules {
   /// {@macro path_rules}
@@ -87,7 +86,7 @@ final class PathRules {
   /// and roads, and are stopped by blocking objects.
   final Set<String> groundModes;
 
-  /// The modes that climb ladders: foot units only.
+  /// The modes that climb ladders: foot units only (MAP-43).
   final Set<String> ladderModes;
 
   /// The modes that cross water and reach islands only on reinforced
@@ -108,7 +107,7 @@ final class PathRules {
   /// (decision 99).
   final String reinforcedBridgeConstruction;
 
-  /// The terrain a bridge deck is priced as.
+  /// The terrain a bridge deck is priced as (MAP-42).
   final String bridgeTerrain;
 
   /// The construction that makes a cell a road.
@@ -117,7 +116,7 @@ final class PathRules {
   /// The terrain a road cell is priced as.
   final String roadTerrain;
 
-  /// Objects ground classes cannot cross.
+  /// Objects ground classes cannot cross (MAP-44).
   final Set<String> blockingObjects;
 
   /// The highest a flying unit may be: the map's highest point +
@@ -433,9 +432,9 @@ final class Pathfinder {
 
   /// One mode for a link or a change of surface; between neighbours, each
   /// half-step takes its own cheapest mode, so an amphibious unit drives
-  /// onto the shore and sails off it. A diagonal step uses only the modes
-  /// that could stand on both cells it passes between: no cutting a wall's
-  /// corner or a river's bend.
+  /// onto the shore and sails off it (MAP-41). A diagonal step uses only
+  /// the modes that could stand on both cells it passes between: no cutting
+  /// a wall's corner or a river's bend (MAP-47).
   _Step? _priceStep(
     PathMover mover,
     CellRef from,
@@ -527,7 +526,9 @@ final class Pathfinder {
   }
 
   /// A bridge or a ladder, crossed with [mode]. A blocking object at its
-  /// far end stops ground classes, as on any cell (Q-MAP-14).
+  /// far end stops ground classes, as on any cell (MAP-44). A ladder costs
+  /// the height climbed, up or down, as flat ground of its far end
+  /// (MAP-43).
   _Step? _linkStep(
     double apPerM,
     String mode,
@@ -558,7 +559,7 @@ final class Pathfinder {
 
   /// Going over an island's edge from [from] onto the ground cell [to]:
   /// only a mode that can fall does it; the fall is free and cannot land
-  /// on a blocking object (Q-MAP-16).
+  /// on a blocking object (MAP-39).
   _Step? _fall(PathMover mover, CellRef from, CellRef to) {
     final edge =
         from.surface != groundSurface &&
@@ -571,7 +572,7 @@ final class Pathfinder {
   }
 
   /// A flyer going up to or down from an island at the same column and
-  /// row: free, under the altitude limit. Other modes cannot.
+  /// row: free, under the altitude limit (MAP-45). Other modes cannot.
   _Step? _surfaceStep(String mode, CellRef from, CellRef to) {
     if (mode != rules.flyingMode) return null;
     final highest = math.max(map.cellAt(from)!.height, map.cellAt(to)!.height);
