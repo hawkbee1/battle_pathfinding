@@ -38,6 +38,8 @@ NavigationMap _flat(
 String _wallOrGrass(int x, int y) => y == 24 && x < 62 ? 'w' : 'g';
 
 void main() {
+  _sharedGridTests();
+
   group('exact', () {
     test('MAP-04 finds the paths Pathfinder finds, at the same cost', () {
       final valley = NavigationFixture.parse(
@@ -207,6 +209,79 @@ void main() {
         coarse.cellAt(const CellRef(5, 5))?.height,
         closeTo(fine.cellAt(const CellRef(10, 10))!.height, 2),
       );
+    });
+  });
+}
+
+void _sharedGridTests() {
+  group(GroundGrid, () {
+    final valley = NavigationFixture.parse(
+      File('test/fixtures/valley.map').readAsStringSync(),
+    );
+
+    test('MAP-04 one grid serves every mover of a map, with the paths each '
+        'finds alone', () {
+      final grid = GroundGrid(map: valley);
+      final movers = [_foot, _wheeled, _amphibious];
+      final shared = [
+        for (final mover in movers)
+          GroundSearch.on(grid, cost: fixtureCost, mover: mover),
+      ];
+
+      expect(grid.searches, equals(3));
+      expect(grid.modes, unorderedEquals(['foot', 'wheeled', 'sail']));
+      for (final (i, mover) in movers.indexed) {
+        final alone = _search(valley, mover);
+        for (final (from, to) in const [
+          (CellRef(0, 0), CellRef(3, 3)),
+          (CellRef(0, 3), CellRef(5, 0)),
+        ]) {
+          expect(
+            shared[i].exact(from, to)?.cells,
+            equals(alone.exact(from, to)?.cells),
+            reason: '${mover.modes} $from → $to',
+          );
+          expect(
+            shared[i].fast(from, to)?.cost,
+            equals(alone.fast(from, to)?.cost),
+          );
+        }
+      }
+    });
+
+    test('MAP-06 a world change applied through one search reaches every '
+        'search on the grid', () {
+      var map = _flat(20, 30, (x, y) => 'g', header: 'legend g grass');
+      final grid = GroundGrid(map: map);
+      final foot = GroundSearch.on(grid, cost: fixtureCost, mover: _foot);
+      final wheeled = GroundSearch.on(grid, cost: fixtureCost, mover: _wheeled);
+      const from = CellRef(2, 2);
+      const to = CellRef(17, 27);
+      foot.fast(from, to);
+      wheeled.fast(from, to);
+      for (var x = 0; x < 19; x++) {
+        final (next, touched) = applyChange(
+          map,
+          ObjectBuilt(CellRef(x, 10), 'wall'),
+        );
+        map = next;
+        foot.apply(map, touched);
+      }
+
+      expect(wheeled.map, same(map));
+      for (final search in [foot, wheeled]) {
+        expect(search.fast(from, to)!.cells, contains(const CellRef(19, 10)));
+        expect(
+          search.exact(from, to)?.cost,
+          closeTo(
+            Pathfinder(
+              map: map,
+              cost: fixtureCost,
+            ).find(mover: search.mover, from: from, to: to)!.cost,
+            1e-6,
+          ),
+        );
+      }
     });
   });
 }
