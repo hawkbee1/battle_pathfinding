@@ -123,6 +123,23 @@ final class PathRules {
   /// The highest a flying unit may be: the map's highest point +
   /// `flying_max_above_highest_terrain_m` (MAP-17, decision 142).
   final double altitudeLimitM;
+
+  /// The terrain [mode] pays on [ref] of [map], whose cell is [cell]: for
+  /// ground classes and `push`, a bridge deck over bridged water (reinforced
+  /// bridges only for `push`) and a road on a road; else the cell's own
+  /// terrain.
+  String terrainFor(NavigationMap map, CellRef ref, NavCell cell, String mode) {
+    if (!groundModes.contains(mode)) return cell.terrain;
+    final built = map.constructionsAt(ref);
+    if (map.isWater(ref)) {
+      final bridged = reinforcedOnlyModes.contains(mode)
+          ? built.contains(reinforcedBridgeConstruction)
+          : built.any(bridgeConstructions.contains);
+      return bridged ? bridgeTerrain : cell.terrain;
+    }
+    if (built.contains(roadConstruction)) return roadTerrain;
+    return cell.terrain;
+  }
 }
 
 /// {@template found_path}
@@ -434,7 +451,7 @@ final class Pathfinder {
         continue;
       }
       final step = _priced(mover.apPerM, mode, [
-        (_terrain(ref, cell, mode), slope, length),
+        (rules.terrainFor(map, ref, cell, mode), slope, length),
       ]);
       if (step != null && (cheapest == null || step.cost < cheapest.cost)) {
         cheapest = step;
@@ -518,21 +535,6 @@ final class Pathfinder {
 
   bool _blocked(CellRef ref) =>
       map.objectsAt(ref).any(rules.blockingObjects.contains);
-
-  /// The terrain [mode] pays on [cell]: a bridge deck over water and a road
-  /// for ground classes, else the cell's own terrain.
-  String _terrain(CellRef ref, NavCell cell, String mode) {
-    if (!rules.groundModes.contains(mode)) return cell.terrain;
-    final built = map.constructionsAt(ref);
-    if (map.isWater(ref)) {
-      final bridged = rules.reinforcedOnlyModes.contains(mode)
-          ? built.contains(rules.reinforcedBridgeConstruction)
-          : built.any(rules.bridgeConstructions.contains);
-      return bridged ? rules.bridgeTerrain : cell.terrain;
-    }
-    if (built.contains(rules.roadConstruction)) return rules.roadTerrain;
-    return cell.terrain;
-  }
 }
 
 typedef _StepKey = (String, CellRef, CellRef, LinkKind?);
