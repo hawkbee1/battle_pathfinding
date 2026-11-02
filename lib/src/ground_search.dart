@@ -21,40 +21,26 @@ final class GroundSearch {
   ///
   /// Prepares the search for [mover] on [map]'s ground.
   new({
-    required this.map,
+    required NavigationMap map,
     required this.cost,
     required this.mover,
     this.rules = const PathRules(),
-  }) : _cells = map.width * map.depth {
+  }) : _map = map,
+       _cells = map.width * map.depth {
     _heights = Float64List(_cells);
     _blocked = Uint8List(_cells);
+    _stand = Uint32List(_cells);
     _terrains = [for (final _ in mover.modes) Uint16List(_cells)];
-    final names = <String, int>{};
+    _memo = [for (final _ in mover.modes) <Map<double, double>>[]];
     for (var index = 0; index < _cells; index++) {
-      final ref = CellRef(index % map.width, index ~/ map.width);
-      final cell = map.cellAt(ref)!;
-      _heights[index] = cell.height;
-      if (map.objectsAt(ref).any(rules.blockingObjects.contains)) {
-        _blocked[index] = 1;
-      }
-      for (final (m, mode) in mover.modes.indexed) {
-        final name = rules.terrainFor(map, ref, cell, mode);
-        _terrains[m][index] = names.putIfAbsent(name, () => names.length);
-      }
+      _load(index);
     }
-    _terrainNames = [
-      for (final entry
-          in names.entries.toList()..sort((a, b) => a.value.compareTo(b.value)))
-        entry.key,
-    ];
-    _memo = [
-      for (final _ in mover.modes)
-        [for (final _ in _terrainNames) <double, double>{}],
-    ];
   }
 
-  /// The map.
-  final NavigationMap map;
+  NavigationMap _map;
+
+  /// The map, with every change [apply] was given.
+  NavigationMap get map => _map;
 
   /// The movement cost.
   final MovementCostFunction cost;
@@ -68,8 +54,14 @@ final class GroundSearch {
   final int _cells;
   late final Float64List _heights;
   late final Uint8List _blocked;
+
+  /// For each cell, the modes (bit m for `mover.modes[m]`) that could stand
+  /// on it on flat ground: a diagonal step needs them on both cells it
+  /// passes between.
+  late final Uint32List _stand;
   late final List<Uint16List> _terrains;
-  late final List<String> _terrainNames;
+  final _terrainNames = <String>[];
+  final _terrainIndex = <String, int>{};
   late final List<List<Map<double, double>>> _memo;
 
   final _blockCosts = <int, Float64List>{};
@@ -82,6 +74,55 @@ final class GroundSearch {
   /// Cells settled by the last search: a measure of its work.
   int lastSettled = 0;
 
+  /// Takes [changed], [map] after a world change, and reloads only the
+  /// ground cells it [touched] and the block prices around them (M3
+  /// Issue 5).
+  void apply(NavigationMap changed, Iterable<CellRef> touched) {
+    _map = changed;
+    final cells = [
+      for (final ref in touched)
+        if (ref.surface == groundSurface && changed.cellAt(ref) != null)
+          ref.y * changed.width + ref.x,
+    ]..forEach(_load);
+    for (final MapEntry(key: blockSize, value: prices) in _blockCosts.entries) {
+      final across = (changed.width / blockSize).ceil();
+      final blocks = {
+        for (final cell in cells)
+          ((cell ~/ changed.width) ~/ blockSize) * across +
+              (cell % changed.width) ~/ blockSize,
+      };
+      for (final block in blocks) {
+        prices[block] = _priceBlock(block % across, block ~/ across, blockSize);
+      }
+    }
+  }
+
+  void _load(int index) {
+    final ref = CellRef(index % _map.width, index ~/ _map.width);
+    final cell = _map.cellAt(ref)!;
+    _heights[index] = cell.height;
+    _blocked[index] = _map.objectsAt(ref).any(rules.blockingObjects.contains)
+        ? 1
+        : 0;
+    for (final (m, mode) in mover.modes.indexed) {
+      final name = rules.terrainFor(_map, ref, cell, mode);
+      _terrains[m][index] = _terrainIndex.putIfAbsent(name, () {
+        _terrainNames.add(name);
+        for (final memo in _memo) {
+          memo.add(<double, double>{});
+        }
+        return _terrainNames.length - 1;
+      });
+    }
+    var stand = 0;
+    for (var m = 0; m < mover.modes.length; m++) {
+      if (_half(index, 0, entering: true, modes: 1 << m) != double.infinity) {
+        stand |= 1 << m;
+      }
+    }
+    _stand[index] = stand;
+  }
+
   /// The cheapest path from [from] to [to] over the whole ground; null when
   /// there is none.
   FoundPath? exact(CellRef from, CellRef to) =>
@@ -89,21 +130,26 @@ final class GroundSearch {
 
   /// A path from [from] to [to] found within a corridor of [corridor]
   /// blocks of [blockSize] × [blockSize] cells around the cheapest path
-  /// over blocks. The corridor doubles until a path is found; null when
-  /// even the whole ground has none.
+  /// over blocks. The corridor doubles until a path is found, the whole
+  /// ground last. Null when there is none: when the blocks give no path,
+  /// no cells do either.
+  ///
+  /// Throws an [ArgumentError] when [blockSize] or [corridor] is below 1.
   FoundPath? fast(
     CellRef from,
     CellRef to, {
     int blockSize = 16,
     int corridor = 1,
   }) {
+    if (blockSize < 1) throw ArgumentError.value(blockSize, 'blockSize');
+    if (corridor < 1) throw ArgumentError.value(corridor, 'corridor');
     final start = _index(from);
     final goal = _index(to);
     final blocks = _blockPath(start, goal, blockSize);
+    if (blocks == null) return null;
     final across = (map.width / blockSize).ceil();
     final down = (map.depth / blockSize).ceil();
-    var width = corridor;
-    while (blocks != null && width < math.max(across, down)) {
+    for (var width = corridor; width < math.max(across, down); width *= 2) {
       final allowed = Uint8List(across * down);
       for (final block in blocks) {
         final bx = block % across;
@@ -128,7 +174,6 @@ final class GroundSearch {
         return allowed[y * across + x] == 1;
       });
       if (path != null) return path;
-      width *= 2;
     }
     return _search(start, goal, null);
   }
@@ -140,11 +185,17 @@ final class GroundSearch {
     return ref.y * map.width + ref.x;
   }
 
-  /// AP per metre of the cheapest mode over half a step on [cell] at
-  /// [slope]; infinity when no mode passes.
-  double _half(int cell, double slope, {required bool entering}) {
+  /// AP per metre of the cheapest of [modes] (bit m for `mover.modes[m]`)
+  /// over half a step on [cell] at [slope]; infinity when none passes.
+  double _half(
+    int cell,
+    double slope, {
+    required bool entering,
+    int modes = 0xFFFFFFFF,
+  }) {
     var best = double.infinity;
     for (var m = 0; m < mover.modes.length; m++) {
+      if (modes & (1 << m) == 0) continue;
       final mode = mover.modes[m];
       if (entering && _blocked[cell] == 1 && rules.groundModes.contains(mode)) {
         continue;
@@ -199,14 +250,19 @@ final class GroundSearch {
           if ((dx == 0 && dy == 0) || nx < 0 || nx >= width) continue;
           final next = ny * width + nx;
           if (allowed != null && !allowed(next)) continue;
-          final length = dx != 0 && dy != 0 ? diagonal : side;
+          final isDiagonal = dx != 0 && dy != 0;
+          final modes = isDiagonal
+              ? _stand[ny * width + x] & _stand[y * width + nx]
+              : 0xFFFFFFFF;
+          if (modes == 0) continue;
+          final length = isDiagonal ? diagonal : side;
           final slope =
               math.atan2(_heights[next] - _heights[cell], length) *
               180 /
               math.pi;
-          final first = _half(cell, slope, entering: false);
+          final first = _half(cell, slope, entering: false, modes: modes);
           if (first == double.infinity) continue;
-          final second = _half(next, slope, entering: true);
+          final second = _half(next, slope, entering: true, modes: modes);
           if (second == double.infinity) continue;
           final total = at + (first + second) * length / 2;
           if (stamps[next] != stamp || total < spent[next]) {
@@ -300,31 +356,31 @@ final class GroundSearch {
 
   /// The AP per metre of each block's cheapest cell on flat ground; kept
   /// per block size, since it depends only on the map and the mover.
-  Float64List _priceBlocks(int blockSize, int across, int down) {
-    final perMetre = Float64List(across * down);
-    for (var by = 0; by < down; by++) {
-      for (var bx = 0; bx < across; bx++) {
-        var cheapest = double.infinity;
-        for (
-          var y = by * blockSize;
-          y < math.min(map.depth, (by + 1) * blockSize);
-          y++
-        ) {
-          for (
-            var x = bx * blockSize;
-            x < math.min(map.width, (bx + 1) * blockSize);
-            x++
-          ) {
-            cheapest = math.min(
-              cheapest,
-              _half(y * map.width + x, 0, entering: true),
-            );
-          }
-        }
-        perMetre[by * across + bx] = cheapest;
+  Float64List _priceBlocks(int blockSize, int across, int down) =>
+      Float64List.fromList([
+        for (var by = 0; by < down; by++)
+          for (var bx = 0; bx < across; bx++) _priceBlock(bx, by, blockSize),
+      ]);
+
+  double _priceBlock(int bx, int by, int blockSize) {
+    var cheapest = double.infinity;
+    for (
+      var y = by * blockSize;
+      y < math.min(map.depth, (by + 1) * blockSize);
+      y++
+    ) {
+      for (
+        var x = bx * blockSize;
+        x < math.min(map.width, (bx + 1) * blockSize);
+        x++
+      ) {
+        cheapest = math.min(
+          cheapest,
+          _half(y * map.width + x, 0, entering: true),
+        );
       }
     }
-    return perMetre;
+    return cheapest;
   }
 }
 

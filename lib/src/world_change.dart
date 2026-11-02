@@ -111,41 +111,31 @@ final class CraterDug extends WorldChange {
   NavigationMap map,
   WorldChange change,
 ) {
-  NavigationMap rebuilt({
-    Map<CellRef, Set<String>>? objects,
-    Map<CellRef, Set<String>>? constructions,
-    List<SurfaceLink>? links,
-    List<Crater>? craters,
-  }) => NavigationMap(
-    cellSizeM: map.cellSizeM,
-    width: map.width,
-    depth: map.depth,
-    ground: map.ground,
-    waterTerrains: map.waterTerrains,
-    islands: map.islands,
-    objects: objects ?? map.objects,
-    constructions: constructions ?? map.constructions,
-    links: links ?? map.links,
-    craters: craters ?? map.craters,
-  );
   switch (change) {
     case ObjectBuilt(:final cell, :final object):
-      return (rebuilt(objects: _with(map.objects, cell, object)), {cell});
+      return (map.copyWith(objects: _with(map.objects, cell, object)), {cell});
     case ObjectDestroyed(:final cell, :final object):
-      return (rebuilt(objects: _without(map.objects, cell, object)), {cell});
+      return (
+        map.copyWith(objects: _without(map.objects, cell, object)),
+        {cell},
+      );
     case ConstructionBuilt(:final cell, :final construction):
       return (
-        rebuilt(constructions: _with(map.constructions, cell, construction)),
+        map.copyWith(
+          constructions: _with(map.constructions, cell, construction),
+        ),
         {cell},
       );
     case ConstructionDestroyed(:final cell, :final construction):
       return (
-        rebuilt(constructions: _without(map.constructions, cell, construction)),
+        map.copyWith(
+          constructions: _without(map.constructions, cell, construction),
+        ),
         {cell},
       );
     case LinkBuilt(:final link):
       return (
-        rebuilt(links: List.unmodifiable([...map.links, link])),
+        map.copyWith(links: List.unmodifiable([...map.links, link])),
         {link.from, link.to},
       );
     case LinkDestroyed(:final kind, :final from, :final to):
@@ -154,7 +144,7 @@ final class CraterDug extends WorldChange {
           ((link.from == from && link.to == to) ||
               (link.from == to && link.to == from));
       return (
-        rebuilt(
+        map.copyWith(
           links: List.unmodifiable([
             for (final link in map.links)
               if (!same(link)) link,
@@ -164,7 +154,7 @@ final class CraterDug extends WorldChange {
       );
     case CraterDug(:final crater):
       return (
-        rebuilt(craters: List.unmodifiable([...map.craters, crater])),
+        map.withCrater(crater),
         {
           for (final (x, y) in crater.cells(
             map.cellSizeM,

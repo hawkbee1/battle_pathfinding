@@ -181,6 +181,9 @@ enum StepFailure {
   /// No mode of the mover can make the step: impassable terrain, a slope
   /// over the limit, a blocking object.
   impassable,
+
+  /// The path has no cell.
+  emptyPath,
 }
 
 /// The outcome of a path check (stack decision 8).
@@ -230,8 +233,9 @@ final class Pathfinder {
     required this.map,
     required this.cost,
     this.rules = const PathRules(),
-    this.cache,
-  });
+  }) : _cache = null;
+
+  const new _cached(this.map, this.cost, this.rules, this._cache);
 
   /// The map.
   final NavigationMap map;
@@ -242,17 +246,24 @@ final class Pathfinder {
   /// How objects, constructions and links are crossed.
   final PathRules rules;
 
-  /// Steps already priced on this map; null to price every step again.
-  final StepCache? cache;
+  /// Steps already priced on this map, for [LivePathfinder]; null to price
+  /// every step again.
+  final _StepCache? _cache;
 
   /// The cheapest path in AP for [mover] from [from] to [to]; null when
-  /// there is none: the mover is stranded (MAP-37).
+  /// there is none: the mover is stranded (MAP-37). Throws an
+  /// [ArgumentError] for a cell the map does not have.
   FoundPath? find({
     required PathMover mover,
     required CellRef from,
     required CellRef to,
   }) {
-    if (map.cellAt(from) == null || map.cellAt(to) == null) return null;
+    for (final cell in [from, to]) {
+      if (map.cellAt(cell) == null) {
+        throw ArgumentError.value(cell, 'cell', 'not on the map');
+      }
+    }
+    final key = _moverKey(mover);
     final best = <CellRef, double>{from: 0};
     final previous = <CellRef, (CellRef, _Step)>{};
     final queue = _Queue()..add(from, 0);
@@ -260,7 +271,7 @@ final class Pathfinder {
       final (cell, spent) = queue.removeFirst();
       if (spent > best[cell]!) continue;
       if (cell == to) break;
-      for (final (next, step) in _steps(mover, cell)) {
+      for (final (next, step) in _steps(mover, key, cell)) {
         final total = spent + step.cost;
         if (total < (best[next] ?? double.infinity)) {
           best[next] = total;
@@ -293,24 +304,38 @@ final class Pathfinder {
 
   /// Checks a path a client sent (stack decision 8): walks it cell by cell
   /// with the same rules and cost, without searching again, and returns its
-  /// cost or the first step that fails.
+  /// cost or the first step that fails. Between two cells it takes the
+  /// cheapest way the search would: the plain step or any link.
   PathCheck check({required PathMover mover, required List<CellRef> path}) {
+    if (path.isEmpty) {
+      return const PathFails(step: 0, reason: StepFailure.emptyPath);
+    }
     for (final (index, cell) in path.indexed) {
       if (map.cellAt(cell) == null) {
         return PathFails(step: index, reason: StepFailure.unknownCell);
       }
     }
+    final key = _moverKey(mover);
     var total = 0.0;
     final samples = <PathSample>[];
     final falls = <CellRef>[];
     for (var index = 1; index < path.length; index++) {
       final from = path[index - 1];
       final to = path[index];
-      final link = _linkBetween(from, to);
-      if (link == null && !_adjacent(from, to)) {
+      final links = [
+        for (final link in map.linksFrom(from))
+          if (link.to == to) link,
+      ];
+      if (links.isEmpty && !_adjacent(from, to)) {
         return PathFails(step: index, reason: StepFailure.notConnected);
       }
-      final step = _cheapestStep(mover, from, to, link);
+      _Step? step;
+      for (final link in [if (_adjacent(from, to)) null, ...links]) {
+        final candidate = _cheapestStep(mover, key, from, to, link);
+        if (candidate != null && (step == null || candidate.cost < step.cost)) {
+          step = candidate;
+        }
+      }
       if (step == null) {
         return PathFails(step: index, reason: StepFailure.impassable);
       }
@@ -325,8 +350,15 @@ final class Pathfinder {
     );
   }
 
+  static String _moverKey(PathMover mover) =>
+      '${mover.apPerM}|${mover.modes.join(',')}';
+
   /// Every step [mover] can make from [cell].
-  Iterable<(CellRef, _Step)> _steps(PathMover mover, CellRef cell) sync* {
+  Iterable<(CellRef, _Step)> _steps(
+    PathMover mover,
+    String key,
+    CellRef cell,
+  ) sync* {
     final targets = <(CellRef, SurfaceLink?)>[
       for (final next in map.neighbours(cell)) (next, null),
       for (final link in map.linksFrom(cell)) (link.to, link),
@@ -334,7 +366,7 @@ final class Pathfinder {
       for (final next in _edgesBelow(cell)) (next, null),
     ];
     for (final (next, link) in targets) {
-      final step = _cheapestStep(mover, cell, next, link);
+      final step = _cheapestStep(mover, key, cell, next, link);
       if (step != null) yield (next, step);
     }
   }
@@ -342,9 +374,10 @@ final class Pathfinder {
   /// The cells at the same column and row on the other surfaces: a flying
   /// unit goes up to or down from an island there.
   Iterable<CellRef> _otherSurfaces(CellRef cell) => [
-    for (final surface in [groundSurface, ...map.islands.keys])
-      if (surface != cell.surface) CellRef(cell.x, cell.y, surface: surface),
-  ].where((other) => map.cellAt(other) != null);
+    if (cell.surface != groundSurface) CellRef(cell.x, cell.y),
+    for (final island in map.islandsAt(cell.x, cell.y))
+      if (island != cell.surface) CellRef(cell.x, cell.y, surface: island),
+  ];
 
   /// The ground cells next to an island cell that the island does not
   /// cover: going there is going over the island's edge.
@@ -366,37 +399,43 @@ final class Pathfinder {
   bool _adjacent(CellRef from, CellRef to) =>
       (from.x - to.x).abs() <= 1 && (from.y - to.y).abs() <= 1 && from != to;
 
-  SurfaceLink? _linkBetween(CellRef from, CellRef to) {
-    for (final link in map.linksFrom(from)) {
-      if (link.to == to) return link;
-    }
-    return null;
-  }
+  /// The two cells a diagonal step between neighbours of one surface
+  /// passes between; empty for any other step.
+  List<CellRef> _corners(CellRef from, CellRef to, SurfaceLink? link) =>
+      link == null &&
+          from.surface == to.surface &&
+          from.x != to.x &&
+          from.y != to.y
+      ? [
+          CellRef(from.x, to.y, surface: from.surface),
+          CellRef(to.x, from.y, surface: from.surface),
+        ]
+      : const [];
 
-  /// The cheapest way for [mover] to step from [from] to [to]: one mode
-  /// for a link or a change of surface; between neighbours, each half-step
-  /// takes its own cheapest mode, so an amphibious unit drives onto the
-  /// shore and sails off it.
+  /// The cheapest way for [mover] to step from [from] to [to], from the
+  /// cache when there is one.
   _Step? _cheapestStep(
     PathMover mover,
+    String moverKey,
     CellRef from,
     CellRef to,
     SurfaceLink? link,
   ) {
-    final cache = this.cache;
+    final cache = _cache;
     if (cache == null) return _priceStep(mover, from, to, link);
-    final key = (
-      '${mover.apPerM}|${mover.modes.join(',')}',
-      from,
-      to,
-      link?.kind,
-    );
-    if (cache._steps.containsKey(key)) return cache._steps[key];
+    final key = (moverKey, from, to, link?.kind);
+    final cached = cache._steps[key];
+    if (cached != null) return cached.$1;
     final step = _priceStep(mover, from, to, link);
-    cache._store(key, step);
+    cache._store(key, step, _corners(from, to, link));
     return step;
   }
 
+  /// One mode for a link or a change of surface; between neighbours, each
+  /// half-step takes its own cheapest mode, so an amphibious unit drives
+  /// onto the shore and sails off it. A diagonal step uses only the modes
+  /// that could stand on both cells it passes between: no cutting a wall's
+  /// corner or a river's bend.
   _Step? _priceStep(
     PathMover mover,
     CellRef from,
@@ -420,10 +459,23 @@ final class Pathfinder {
       }
       return cheapest;
     }
+    final corners = _corners(from, to, link);
+    final modes = [
+      for (final mode in mover.modes)
+        if (corners.every((corner) => _canStand(mover.apPerM, mode, corner)))
+          mode,
+    ];
     final slope = map.slopeDegrees(from, to);
     final half = map.stepLengthM(from, to) / 2;
-    final first = _cheapestHalf(mover, from, slope, half, entering: false);
-    final second = _cheapestHalf(mover, to, slope, half, entering: true);
+    final first = _cheapestHalf(
+      mover,
+      modes,
+      from,
+      slope,
+      half,
+      entering: false,
+    );
+    final second = _cheapestHalf(mover, modes, to, slope, half, entering: true);
     if (first == null || second == null) return null;
     return _Step(
       cost: first.cost + second.cost,
@@ -431,11 +483,25 @@ final class Pathfinder {
     );
   }
 
-  /// The cheapest mode of [mover] over half a step on [ref]. A ground
-  /// class cannot enter a cell with a blocking object; a flyer cannot pass
-  /// over the altitude limit.
+  /// Whether [mode] could stand on [ref] on flat ground: the cell exists,
+  /// does not block it and has a cost for it.
+  bool _canStand(double apPerM, String mode, CellRef ref) {
+    final cell = map.cellAt(ref);
+    if (cell == null) return false;
+    if (rules.groundModes.contains(mode) && _blocked(ref)) return false;
+    if (mode == rules.flyingMode && cell.height > rules.altitudeLimitM) {
+      return false;
+    }
+    return cost(apPerM, mode, rules.terrainFor(map, ref, cell, mode), 0) !=
+        null;
+  }
+
+  /// The cheapest of [modes] over half a step on [ref]. A ground class
+  /// cannot enter a cell with a blocking object; a flyer cannot pass over
+  /// the altitude limit.
   _Step? _cheapestHalf(
     PathMover mover,
+    List<String> modes,
     CellRef ref,
     double slope,
     double length, {
@@ -443,7 +509,7 @@ final class Pathfinder {
   }) {
     final cell = map.cellAt(ref)!;
     _Step? cheapest;
-    for (final mode in mover.modes) {
+    for (final mode in modes) {
       if (rules.groundModes.contains(mode) && entering && _blocked(ref)) {
         continue;
       }
@@ -460,7 +526,8 @@ final class Pathfinder {
     return cheapest;
   }
 
-  /// A bridge or a ladder, crossed with [mode].
+  /// A bridge or a ladder, crossed with [mode]. A blocking object at its
+  /// far end stops ground classes, as on any cell (Q-MAP-14).
   _Step? _linkStep(
     double apPerM,
     String mode,
@@ -470,6 +537,7 @@ final class Pathfinder {
   ) {
     final start = map.cellAt(from)!;
     final end = map.cellAt(to)!;
+    if (rules.groundModes.contains(mode) && _blocked(to)) return null;
     if (link.kind == LinkKind.ladder) {
       if (!rules.ladderModes.contains(mode)) return null;
       return _priced(apPerM, mode, [
@@ -489,12 +557,14 @@ final class Pathfinder {
   }
 
   /// Going over an island's edge from [from] onto the ground cell [to]:
-  /// only a mode that can fall does it; the fall is free (Q-MAP-16).
+  /// only a mode that can fall does it; the fall is free and cannot land
+  /// on a blocking object (Q-MAP-16).
   _Step? _fall(PathMover mover, CellRef from, CellRef to) {
     final edge =
         from.surface != groundSurface &&
         to.surface == groundSurface &&
-        !map.islands[from.surface]!.containsKey((to.x, to.y));
+        !map.islands[from.surface]!.containsKey((to.x, to.y)) &&
+        !_blocked(to);
     return edge && mover.modes.any(rules.fallModes.contains)
         ? const _Step(cost: 0, samples: [], fall: true)
         : null;
@@ -539,25 +609,22 @@ final class Pathfinder {
 
 typedef _StepKey = (String, CellRef, CellRef, LinkKind?);
 
-/// {@template step_cache}
-/// The steps a [Pathfinder] has priced, kept between searches on a map that
-/// changes (M3 Issue 5): a change forgets only the steps that start or end
-/// on a cell it touches.
-/// {@endtemplate}
-final class StepCache {
-  final _steps = <_StepKey, _Step?>{};
+/// The steps a [Pathfinder] has priced on the map a [LivePathfinder]
+/// holds: a change forgets only the steps whose cost may depend on a cell
+/// it touches (both ends, and the corners of a diagonal).
+final class _StepCache {
+  final _steps = <_StepKey, (_Step?,)>{};
   final _byCell = <CellRef, Set<_StepKey>>{};
 
-  /// How many steps it holds.
   int get length => _steps.length;
 
-  void _store(_StepKey key, _Step? step) {
-    _steps[key] = step;
-    _byCell.putIfAbsent(key.$2, () => {}).add(key);
-    _byCell.putIfAbsent(key.$3, () => {}).add(key);
+  void _store(_StepKey key, _Step? step, List<CellRef> corners) {
+    _steps[key] = (step,);
+    for (final cell in [key.$2, key.$3, ...corners]) {
+      _byCell.putIfAbsent(cell, () => {}).add(key);
+    }
   }
 
-  /// Forgets every step that starts or ends on one of [cells].
   void forget(Iterable<CellRef> cells) {
     for (final cell in cells) {
       (_byCell.remove(cell) ?? const <_StepKey>{}).forEach(_steps.remove);
@@ -582,7 +649,7 @@ final class LivePathfinder {
   final PathRules rules;
 
   NavigationMap _map;
-  final _cache = StepCache();
+  final _cache = _StepCache();
 
   /// The map with every change applied so far.
   NavigationMap get map => _map;
@@ -590,8 +657,7 @@ final class LivePathfinder {
   /// The steps priced and kept.
   int get cachedSteps => _cache.length;
 
-  Pathfinder get _finder =>
-      Pathfinder(map: _map, cost: cost, rules: rules, cache: _cache);
+  Pathfinder get _finder => Pathfinder._cached(_map, cost, rules, _cache);
 
   /// See [Pathfinder.find].
   FoundPath? find({

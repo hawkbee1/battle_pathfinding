@@ -445,22 +445,22 @@ void main() {
       expect(path.cost, 0);
     });
 
-    test('there is no path from or to a cell the map does not have', () {
+    test('rejects a start or a goal the map does not have', () {
       expect(
-        finder.find(
+        () => finder.find(
           mover: _foot,
           from: const CellRef(9, 9),
           to: const CellRef(0, 0),
         ),
-        isNull,
+        throwsArgumentError,
       );
       expect(
-        finder.find(
+        () => finder.find(
           mover: _foot,
           from: const CellRef(0, 0),
           to: const CellRef(9, 9),
         ),
-        isNull,
+        throwsArgumentError,
       );
     });
   });

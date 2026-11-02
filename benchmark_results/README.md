@@ -32,3 +32,13 @@ bench=long_path cell_m=20 cells=1250000 span_km=2.0 mover=wheeled build_ms=129 p
 ```text
 bench=world_change cells=65536 cached_steps=521080 warm_ms=1971 changes=200 mean_us=19 p50_us=20 p95_us=31 max_us=35
 ```
+
+## After the review fixes (diagonal corners, link checks, indexes), same day
+
+```text
+bench=world_change cells=65536 cached_steps=521080 warm_ms=1797 changes=200 mean_us=18 p50_us=17 p95_us=31 max_us=48
+bench=long_path cell_m=10 cells=5000000 span_km=2.0 mover=foot build_ms=490 prepare_ms=770 paths=20 found=20 fast_median_ms=15 fast_max_ms=249 fast_settled_mean=23031 exact_ms=169/218/616 max_margin_pct=0.07 rss_mb=216
+bench=long_path cell_m=10 cells=5000000 span_km=2.0 mover=wheeled build_ms=490 prepare_ms=818 paths=20 found=20 fast_median_ms=16 fast_max_ms=179 fast_settled_mean=23331 exact_ms=154/258/653 max_margin_pct=0.07 rss_mb=216
+bench=long_path cell_m=20 cells=1250000 span_km=2.0 mover=foot build_ms=138 prepare_ms=220 paths=20 found=20 fast_median_ms=7 fast_max_ms=56 fast_settled_mean=11522 exact_ms=56/131/34 max_margin_pct=0.15 rss_mb=64
+bench=long_path cell_m=20 cells=1250000 span_km=2.0 mover=wheeled build_ms=138 prepare_ms=183 paths=20 found=19 fast_median_ms=8 fast_max_ms=47 fast_settled_mean=10696 exact_ms=58/140/39 max_margin_pct=0.00 rss_mb=64
+```
