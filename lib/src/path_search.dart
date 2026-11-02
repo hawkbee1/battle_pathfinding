@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:battle_pathfinding/src/navigation_map.dart';
+import 'package:battle_pathfinding/src/world_change.dart';
 
 /// The AP per metre of a mover whose flat-grass cost is `apPerM`, moving
 /// with movement class or profile `mode` over `terrainType` at a signed
@@ -212,6 +213,7 @@ final class Pathfinder {
     required this.map,
     required this.cost,
     this.rules = const PathRules(),
+    this.cache,
   });
 
   /// The map.
@@ -222,6 +224,9 @@ final class Pathfinder {
 
   /// How objects, constructions and links are crossed.
   final PathRules rules;
+
+  /// Steps already priced on this map; null to price every step again.
+  final StepCache? cache;
 
   /// The cheapest path in AP for [mover] from [from] to [to]; null when
   /// there is none: the mover is stranded (MAP-37).
@@ -356,6 +361,26 @@ final class Pathfinder {
   /// takes its own cheapest mode, so an amphibious unit drives onto the
   /// shore and sails off it.
   _Step? _cheapestStep(
+    PathMover mover,
+    CellRef from,
+    CellRef to,
+    SurfaceLink? link,
+  ) {
+    final cache = this.cache;
+    if (cache == null) return _priceStep(mover, from, to, link);
+    final key = (
+      '${mover.apPerM}|${mover.modes.join(',')}',
+      from,
+      to,
+      link?.kind,
+    );
+    if (cache._steps.containsKey(key)) return cache._steps[key];
+    final step = _priceStep(mover, from, to, link);
+    cache._store(key, step);
+    return step;
+  }
+
+  _Step? _priceStep(
     PathMover mover,
     CellRef from,
     CellRef to,
@@ -507,6 +532,83 @@ final class Pathfinder {
     }
     if (built.contains(rules.roadConstruction)) return rules.roadTerrain;
     return cell.terrain;
+  }
+}
+
+typedef _StepKey = (String, CellRef, CellRef, LinkKind?);
+
+/// {@template step_cache}
+/// The steps a [Pathfinder] has priced, kept between searches on a map that
+/// changes (M3 Issue 5): a change forgets only the steps that start or end
+/// on a cell it touches.
+/// {@endtemplate}
+final class StepCache {
+  final _steps = <_StepKey, _Step?>{};
+  final _byCell = <CellRef, Set<_StepKey>>{};
+
+  /// How many steps it holds.
+  int get length => _steps.length;
+
+  void _store(_StepKey key, _Step? step) {
+    _steps[key] = step;
+    _byCell.putIfAbsent(key.$2, () => {}).add(key);
+    _byCell.putIfAbsent(key.$3, () => {}).add(key);
+  }
+
+  /// Forgets every step that starts or ends on one of [cells].
+  void forget(Iterable<CellRef> cells) {
+    for (final cell in cells) {
+      (_byCell.remove(cell) ?? const <_StepKey>{}).forEach(_steps.remove);
+    }
+  }
+}
+
+/// {@template live_pathfinder}
+/// Paths that follow the changes of a battle (M3 Issue 5, MAP-06): it holds
+/// the current [map] and the steps it has priced, and each change forgets
+/// only the steps it touches. Paths after a change are those a search from
+/// scratch on the changed map finds.
+/// {@endtemplate}
+final class LivePathfinder {
+  /// {@macro live_pathfinder}
+  new({required this._map, required this.cost, this.rules = const PathRules()});
+
+  /// The movement cost.
+  final MovementCostFunction cost;
+
+  /// How objects, constructions and links are crossed.
+  final PathRules rules;
+
+  NavigationMap _map;
+  final _cache = StepCache();
+
+  /// The map with every change applied so far.
+  NavigationMap get map => _map;
+
+  /// The steps priced and kept.
+  int get cachedSteps => _cache.length;
+
+  Pathfinder get _finder =>
+      Pathfinder(map: _map, cost: cost, rules: rules, cache: _cache);
+
+  /// See [Pathfinder.find].
+  FoundPath? find({
+    required PathMover mover,
+    required CellRef from,
+    required CellRef to,
+  }) => _finder.find(mover: mover, from: from, to: to);
+
+  /// See [Pathfinder.check].
+  PathCheck check({required PathMover mover, required List<CellRef> path}) =>
+      _finder.check(mover: mover, path: path);
+
+  /// Applies [change] and forgets the steps it touches; returns the cells
+  /// it touched.
+  Set<CellRef> apply(WorldChange change) {
+    final (map, touched) = applyChange(_map, change);
+    _map = map;
+    _cache.forget(touched);
+    return touched;
   }
 }
 
