@@ -42,3 +42,18 @@ bench=long_path cell_m=10 cells=5000000 span_km=2.0 mover=wheeled build_ms=490 p
 bench=long_path cell_m=20 cells=1250000 span_km=2.0 mover=foot build_ms=138 prepare_ms=220 paths=20 found=20 fast_median_ms=7 fast_max_ms=56 fast_settled_mean=11522 exact_ms=56/131/34 max_margin_pct=0.15 rss_mb=64
 bench=long_path cell_m=20 cells=1250000 span_km=2.0 mover=wheeled build_ms=138 prepare_ms=183 paths=20 found=19 fast_median_ms=8 fast_max_ms=47 fast_settled_mean=10696 exact_ms=58/140/39 max_margin_pct=0.00 rss_mb=64
 ```
+
+## Shared ground grid (M5.10), 2026-11-02
+
+One `GroundGrid` per map holds the heights, blocking objects, effective terrains per mode
+and the working arrays of a search; each mover's `GroundSearch` keeps only its cost memo,
+flat-ground tables and block prices. Six movers (foot, tracked, wheeled, amphibious, boat,
+push) on the 10 m synthetic map, one fast path each: about **104 MB** on one shared grid,
+about **355 MB** with a grid each (RSS growth after the map is built). Stand bits for
+diagonals are computed from flat tables instead of a stored array, so 2 km paths are a
+little slower than before (P-01 target: 50 ms):
+
+```text
+bench=long_path cell_m=10 cells=5000000 span_km=2.0 mover=foot build_ms=539 prepare_ms=936 paths=20 found=20 fast_median_ms=23 fast_max_ms=246 fast_settled_mean=23031 exact_ms=233/303/891 max_margin_pct=0.07 rss_mb=181
+bench=long_path cell_m=10 cells=5000000 span_km=2.0 mover=wheeled build_ms=539 prepare_ms=901 paths=20 found=20 fast_median_ms=24 fast_max_ms=245 fast_settled_mean=23331 exact_ms=207/336/874 max_margin_pct=0.07 rss_mb=180
+```

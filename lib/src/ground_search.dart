@@ -4,93 +4,185 @@ import 'dart:typed_data';
 import 'package:battle_pathfinding/src/navigation_map.dart';
 import 'package:battle_pathfinding/src/path_search.dart';
 
-/// {@template ground_search}
-/// Long paths across the ground of big maps (M3 Issue 6, MAP-04): up to
-/// 1,000 × 5,000 cells of 10 m.
+/// {@template ground_grid}
+/// The ground of one map as typed arrays: heights, blocking objects and
+/// the effective terrain of each movement mode, built once and shared by
+/// every [GroundSearch] on it (Flyweight, stack decision 7), with the
+/// working arrays of one search at a time. Each mover's search keeps only
+/// its memoized costs and block prices.
 ///
-/// It prices steps exactly as [Pathfinder] does (half a step on each
-/// cell's terrain, the cheapest mode per half, no cutting corners: MAP-41,
-/// MAP-47), with typed arrays and
-/// memoized costs. [exact] searches the whole ground; [fast] first finds a
-/// path over blocks of cells, then searches only a corridor around it. Both
-/// return paths through [Pathfinder.check], so their cost and samples are
-/// the regular ones. Islands and links are not used: long paths stay on the
-/// ground.
+/// A host thread runs one search at a time, so the searches of a grid
+/// share its working arrays.
 /// {@endtemplate}
-final class GroundSearch {
-  /// {@macro ground_search}
-  ///
-  /// Prepares the search for [mover] on [map]'s ground.
-  new({
-    required NavigationMap map,
-    required this.cost,
-    required this.mover,
-    this.rules = const PathRules(),
-  }) : _map = map,
-       _cells = map.width * map.depth {
+final class GroundGrid {
+  /// {@macro ground_grid}
+  new({required NavigationMap map, this.rules = const PathRules()})
+    : _map = map,
+      _cells = map.width * map.depth {
     _heights = Float64List(_cells);
     _blocked = Uint8List(_cells);
-    _stand = Uint32List(_cells);
-    _terrains = [for (final _ in mover.modes) Uint16List(_cells)];
-    _memo = [for (final _ in mover.modes) <Map<double, double>>[]];
     for (var index = 0; index < _cells; index++) {
-      _load(index);
+      _loadCell(index);
     }
   }
 
   NavigationMap _map;
 
-  /// The map, with every change [apply] was given.
+  /// The map, as of the last [apply].
   NavigationMap get map => _map;
 
-  /// The movement cost.
-  final MovementCostFunction cost;
-
-  /// What looks for paths.
-  final PathMover mover;
-
-  /// How objects and constructions are crossed.
+  /// The rules for blocking objects and effective terrains.
   final PathRules rules;
 
   final int _cells;
   late final Float64List _heights;
   late final Uint8List _blocked;
-
-  /// For each cell, the modes (bit m for `mover.modes[m]`) that could stand
-  /// on it on flat ground: a diagonal step needs them on both cells it
-  /// passes between.
-  late final Uint32List _stand;
-  late final List<Uint16List> _terrains;
+  final _terrains = <String, Uint16List>{};
   final _terrainNames = <String>[];
   final _terrainIndex = <String, int>{};
-  late final List<List<Map<double, double>>> _memo;
-
-  final _blockCosts = <int, Float64List>{};
+  final _searches = <GroundSearch>[];
 
   Float64List? _spent;
   Int32List? _previous;
   Int32List? _stamps;
   var _stamp = 0;
 
-  /// Cells settled by the last search: a measure of its work.
-  int lastSettled = 0;
+  /// The modes whose effective terrains are built: one array each, shared
+  /// by every search whose mover has that mode.
+  Iterable<String> get modes => _terrains.keys;
+
+  /// The searches on this grid.
+  int get searches => _searches.length;
 
   /// Takes [changed], [map] after a world change, and reloads only the
-  /// ground cells it [touched] and the block prices around them (M3
-  /// Issue 5).
+  /// ground cells it [touched] and, in every search on this grid, the
+  /// block prices around them (M3 Issue 5).
   void apply(NavigationMap changed, Iterable<CellRef> touched) {
     _map = changed;
     final cells = [
       for (final ref in touched)
         if (ref.surface == groundSurface && changed.cellAt(ref) != null)
           ref.y * changed.width + ref.x,
-    ]..forEach(_load);
+    ]..forEach(_loadCell);
+    for (final search in _searches) {
+      search._reprice(cells);
+    }
+  }
+
+  Uint16List _terrainsOf(String mode) => _terrains.putIfAbsent(mode, () {
+    final terrains = Uint16List(_cells);
+    for (var index = 0; index < _cells; index++) {
+      terrains[index] = _terrainAt(index, mode);
+    }
+    return terrains;
+  });
+
+  int _terrainAt(int index, String mode) {
+    final ref = CellRef(index % _map.width, index ~/ _map.width);
+    final name = rules.terrainFor(_map, ref, _map.cellAt(ref)!, mode);
+    return _terrainIndex.putIfAbsent(name, () {
+      _terrainNames.add(name);
+      return _terrainNames.length - 1;
+    });
+  }
+
+  void _loadCell(int index) {
+    final ref = CellRef(index % _map.width, index ~/ _map.width);
+    _heights[index] = _map.cellAt(ref)!.height;
+    _blocked[index] = _map.objectsAt(ref).any(rules.blockingObjects.contains)
+        ? 1
+        : 0;
+    for (final MapEntry(key: mode, value: terrains) in _terrains.entries) {
+      terrains[index] = _terrainAt(index, mode);
+    }
+  }
+}
+
+/// {@template ground_search}
+/// Long paths across the ground of big maps (M3 Issue 6, MAP-04): up to
+/// 1,000 × 5,000 cells of 10 m.
+///
+/// It prices steps exactly as [Pathfinder] does (half a step on each
+/// cell's terrain, the cheapest mode per half, no cutting corners: MAP-41,
+/// MAP-47), on the typed arrays of a [GroundGrid] and with memoized costs.
+/// [exact] searches the whole ground; [fast] first finds a path over
+/// blocks of cells, then searches only a corridor around it. Both return
+/// paths through [Pathfinder.check], so their cost and samples are the
+/// regular ones. Islands and links are not used: long paths stay on the
+/// ground.
+/// {@endtemplate}
+final class GroundSearch {
+  /// {@macro ground_search}
+  ///
+  /// Prepares the search for [mover] on [map]'s ground, on a grid of its
+  /// own. Movers of one map share a grid with [GroundSearch.on].
+  factory({
+    required NavigationMap map,
+    required MovementCostFunction cost,
+    required PathMover mover,
+    PathRules rules = const PathRules(),
+  }) => GroundSearch.on(
+    GroundGrid(map: map, rules: rules),
+    cost: cost,
+    mover: mover,
+  );
+
+  /// {@macro ground_search}
+  ///
+  /// Prepares the search for [mover] on [grid], which it shares with the
+  /// other movers of the map.
+  new on(this.grid, {required this.cost, required this.mover}) {
+    _terrains = [for (final mode in mover.modes) grid._terrainsOf(mode)];
+    _memo = [for (final _ in mover.modes) <Map<double, double>>[]];
+    _flat = [for (final _ in mover.modes) <int>[]];
+    _onGround = [
+      for (final mode in mover.modes) rules.groundModes.contains(mode),
+    ];
+    _flying = [for (final mode in mover.modes) mode == rules.flyingMode];
+    grid._searches.add(this);
+  }
+
+  /// The shared ground.
+  final GroundGrid grid;
+
+  /// The map, as of the last [apply].
+  NavigationMap get map => grid.map;
+
+  /// The movement cost the rules core injects.
+  final MovementCostFunction cost;
+
+  /// Who moves.
+  final PathMover mover;
+
+  /// The rules for blocking objects and effective terrains.
+  PathRules get rules => grid.rules;
+
+  late final List<Uint16List> _terrains;
+  late final List<List<Map<double, double>>> _memo;
+
+  /// Per mode and terrain: 0 not known yet, 1 passable on flat ground, 2
+  /// not.
+  late final List<List<int>> _flat;
+  late final List<bool> _onGround;
+  late final List<bool> _flying;
+
+  final _blockCosts = <int, Float64List>{};
+
+  /// The cells the last search settled: a measure of its work.
+  int lastSettled = 0;
+
+  /// Takes [changed], [map] after a world change, for every search on the
+  /// grid (see [GroundGrid.apply]).
+  void apply(NavigationMap changed, Iterable<CellRef> touched) =>
+      grid.apply(changed, touched);
+
+  void _reprice(List<int> cells) {
     for (final MapEntry(key: blockSize, value: prices) in _blockCosts.entries) {
-      final across = (changed.width / blockSize).ceil();
+      final across = (map.width / blockSize).ceil();
       final blocks = {
         for (final cell in cells)
-          ((cell ~/ changed.width) ~/ blockSize) * across +
-              (cell % changed.width) ~/ blockSize,
+          ((cell ~/ map.width) ~/ blockSize) * across +
+              (cell % map.width) ~/ blockSize,
       };
       for (final block in blocks) {
         prices[block] = _priceBlock(block % across, block ~/ across, blockSize);
@@ -98,30 +190,34 @@ final class GroundSearch {
     }
   }
 
-  void _load(int index) {
-    final ref = CellRef(index % _map.width, index ~/ _map.width);
-    final cell = _map.cellAt(ref)!;
-    _heights[index] = cell.height;
-    _blocked[index] = _map.objectsAt(ref).any(rules.blockingObjects.contains)
-        ? 1
-        : 0;
-    for (final (m, mode) in mover.modes.indexed) {
-      final name = rules.terrainFor(_map, ref, cell, mode);
-      _terrains[m][index] = _terrainIndex.putIfAbsent(name, () {
-        _terrainNames.add(name);
-        for (final memo in _memo) {
-          memo.add(<double, double>{});
-        }
-        return _terrainNames.length - 1;
-      });
-    }
+  /// The modes of [mover] that can stand on [cell] (bit m for
+  /// `mover.modes[m]`): a diagonal needs both cells it passes between.
+  ///
+  /// The same test as entering at slope 0 ([_half]), on flat tables of the
+  /// modes and terrains instead of the cost memo, since the search asks it
+  /// for every diagonal step.
+  int _standing(int cell) {
     var stand = 0;
     for (var m = 0; m < mover.modes.length; m++) {
-      if (_half(index, 0, entering: true, modes: 1 << m) != double.infinity) {
-        stand |= 1 << m;
+      if (_onGround[m] && grid._blocked[cell] == 1) continue;
+      if (_flying[m] && grid._heights[cell] > rules.altitudeLimitM) continue;
+      final terrain = _terrains[m][cell];
+      final flat = _flat[m];
+      while (flat.length <= terrain) {
+        flat.add(0);
       }
+      if (flat[terrain] == 0) {
+        final perMetre = cost(
+          mover.apPerM,
+          mover.modes[m],
+          grid._terrainNames[terrain],
+          0,
+        );
+        flat[terrain] = perMetre == null || perMetre == double.infinity ? 2 : 1;
+      }
+      if (flat[terrain] == 1) stand |= 1 << m;
     }
-    _stand[index] = stand;
+    return stand;
   }
 
   /// The cheapest path from [from] to [to] over the whole ground; null when
@@ -198,17 +294,24 @@ final class GroundSearch {
     for (var m = 0; m < mover.modes.length; m++) {
       if (modes & (1 << m) == 0) continue;
       final mode = mover.modes[m];
-      if (entering && _blocked[cell] == 1 && rules.groundModes.contains(mode)) {
+      if (entering &&
+          grid._blocked[cell] == 1 &&
+          rules.groundModes.contains(mode)) {
         continue;
       }
-      if (mode == rules.flyingMode && _heights[cell] > rules.altitudeLimitM) {
+      if (mode == rules.flyingMode &&
+          grid._heights[cell] > rules.altitudeLimitM) {
         continue;
       }
       final terrain = _terrains[m][cell];
-      final perMetre = _memo[m][terrain].putIfAbsent(
+      final memo = _memo[m];
+      while (memo.length <= terrain) {
+        memo.add(<double, double>{});
+      }
+      final perMetre = memo[terrain].putIfAbsent(
         slope,
         () =>
-            cost(mover.apPerM, mode, _terrainNames[terrain], slope) ??
+            cost(mover.apPerM, mode, grid._terrainNames[terrain], slope) ??
             double.infinity,
       );
       if (perMetre < best) best = perMetre;
@@ -218,10 +321,11 @@ final class GroundSearch {
 
   /// Dijkstra over the ground cells [allowed] keeps (all when null).
   FoundPath? _search(int start, int goal, bool Function(int cell)? allowed) {
-    final spent = _spent ??= Float64List(_cells);
-    final previous = _previous ??= Int32List(_cells);
-    final stamps = _stamps ??= Int32List(_cells);
-    final stamp = ++_stamp;
+    final spent = grid._spent ??= Float64List(grid._cells);
+    final previous = grid._previous ??= Int32List(grid._cells);
+    final stamps = grid._stamps ??= Int32List(grid._cells);
+    final stamp = ++grid._stamp;
+    final heights = grid._heights;
     final heap = _Heap();
     spent[start] = 0;
     previous[start] = -1;
@@ -253,14 +357,12 @@ final class GroundSearch {
           if (allowed != null && !allowed(next)) continue;
           final isDiagonal = dx != 0 && dy != 0;
           final modes = isDiagonal
-              ? _stand[ny * width + x] & _stand[y * width + nx]
+              ? _standing(ny * width + x) & _standing(y * width + nx)
               : 0xFFFFFFFF;
           if (modes == 0) continue;
           final length = isDiagonal ? diagonal : side;
           final slope =
-              math.atan2(_heights[next] - _heights[cell], length) *
-              180 /
-              math.pi;
+              math.atan2(heights[next] - heights[cell], length) * 180 / math.pi;
           final first = _half(cell, slope, entering: false, modes: modes);
           if (first == double.infinity) continue;
           final second = _half(next, slope, entering: true, modes: modes);
