@@ -196,6 +196,29 @@ void main() {
       expect(live.map.ground[1].height, 0);
       expect(live.map.cellAt(const CellRef(1, 0))?.height, -3);
     });
+
+    test('MAP-06 a change copies only the cells it changes, on top of the '
+        'authored objects and constructions', () {
+      final map = _row('T g g', extra: 'build road 2,0\n');
+      final live = _live(map)
+        ..apply(const ObjectBuilt(CellRef(1, 0), 'wall'))
+        ..apply(const ConstructionDestroyed(CellRef(2, 0), 'road'))
+        ..apply(const ObjectDestroyed(CellRef(0, 0), 'tree'));
+      final changed = live.map;
+
+      expect(changed.objectsAt(const CellRef(1, 0)), {'wall'});
+      expect(changed.objectsAt(const CellRef(0, 0)), isEmpty);
+      expect(changed.objects, {
+        const CellRef(1, 0): {'wall'},
+      });
+      expect(changed.constructionsAt(const CellRef(2, 0)), isEmpty);
+      expect(changed.constructions, isEmpty);
+      expect(map.objectsAt(const CellRef(0, 0)), {'tree'});
+      expect(map.objects, same(map.objects));
+
+      final replaced = changed.copyWith(objects: const {});
+      expect(replaced.objectsAt(const CellRef(1, 0)), isEmpty);
+    });
   });
 
   group('incremental updates', () {

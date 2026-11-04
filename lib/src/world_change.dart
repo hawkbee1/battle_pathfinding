@@ -113,23 +113,28 @@ final class CraterDug extends WorldChange {
 ) {
   switch (change) {
     case ObjectBuilt(:final cell, :final object):
-      return (map.copyWith(objects: _with(map.objects, cell, object)), {cell});
+      return (
+        map.withObjectsAt(cell, {...map.objectsAt(cell), object}),
+        {cell},
+      );
     case ObjectDestroyed(:final cell, :final object):
       return (
-        map.copyWith(objects: _without(map.objects, cell, object)),
+        map.withObjectsAt(cell, {...map.objectsAt(cell)}..remove(object)),
         {cell},
       );
     case ConstructionBuilt(:final cell, :final construction):
       return (
-        map.copyWith(
-          constructions: _with(map.constructions, cell, construction),
-        ),
+        map.withConstructionsAt(cell, {
+          ...map.constructionsAt(cell),
+          construction,
+        }),
         {cell},
       );
     case ConstructionDestroyed(:final cell, :final construction):
       return (
-        map.copyWith(
-          constructions: _without(map.constructions, cell, construction),
+        map.withConstructionsAt(
+          cell,
+          {...map.constructionsAt(cell)}..remove(construction),
         ),
         {cell},
       );
@@ -165,26 +170,4 @@ final class CraterDug extends WorldChange {
         },
       );
   }
-}
-
-Map<CellRef, Set<String>> _with(
-  Map<CellRef, Set<String>> byCell,
-  CellRef cell,
-  String name,
-) => Map.unmodifiable({
-  ...byCell,
-  cell: Set<String>.unmodifiable({...?byCell[cell], name}),
-});
-
-Map<CellRef, Set<String>> _without(
-  Map<CellRef, Set<String>> byCell,
-  CellRef cell,
-  String name,
-) {
-  final left = {...?byCell[cell]}..remove(name);
-  return Map.unmodifiable({
-    for (final MapEntry(:key, :value) in byCell.entries)
-      if (key != cell) key: value,
-    if (left.isNotEmpty) cell: Set<String>.unmodifiable(left),
-  });
 }

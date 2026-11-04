@@ -156,6 +156,35 @@ void main() {
       );
     });
 
+    test('answers an unreachable goal at once, and again after a change '
+        'opens the way', () {
+      // A wall closes the map's south half off entirely.
+      var map = _flat(
+        64,
+        48,
+        (x, y) => y == 24 ? 'w' : 'g',
+        header: 'legend g grass\nlegend w grass wall',
+      );
+      final grid = GroundGrid(map: map);
+      final search = GroundSearch.on(grid, cost: fixtureCost, mover: _foot);
+      const from = CellRef(2, 2);
+      const to = CellRef(2, 46);
+
+      expect(search.fast(from, to, blockSize: 8), isNull);
+      expect(search.lastSettled, lessThan(64 * 24));
+
+      final (opened, touched) = applyChange(
+        map,
+        const ObjectDestroyed(CellRef(40, 24), 'wall'),
+      );
+      map = opened;
+      search.apply(map, touched);
+      expect(
+        search.fast(from, to, blockSize: 8)!.cells,
+        contains(const CellRef(40, 24)),
+      );
+    });
+
     test('falls back to the whole ground when the blocks give no path', () {
       // The lake covers most of its blocks; one column of bridges crosses
       // it, too thin for the block search but enough for foot units.

@@ -171,12 +171,17 @@ final class GroundSearch {
   /// The cells the last search settled: a measure of its work.
   int lastSettled = 0;
 
+  /// The ground's connected parts for this mover, by cell; null until an
+  /// unreachable goal needs them, and after a world change.
+  Int32List? _labels;
+
   /// Takes [changed], [map] after a world change, for every search on the
   /// grid (see [GroundGrid.apply]).
   void apply(NavigationMap changed, Iterable<CellRef> touched) =>
       grid.apply(changed, touched);
 
   void _reprice(List<int> cells) {
+    _labels = null;
     for (final MapEntry(key: blockSize, value: prices) in _blockCosts.entries) {
       final across = (map.width / blockSize).ceil();
       final blocks = {
@@ -271,8 +276,69 @@ final class GroundSearch {
         return allowed[y * across + x] == 1;
       });
       if (path != null) return path;
+      // An unreachable goal answers at once instead of widening the
+      // corridor to the whole ground (deferred from M3.6).
+      final labels = _labels ??= _label();
+      if (labels[start] != labels[goal]) return null;
     }
     return _search(start, goal, null);
+  }
+
+  /// The parts of the ground this mover connects: two cells it can stand
+  /// on, joined by a step it passes one way or the other, share a label.
+  /// Cells with different labels have no path between them; a cell it
+  /// cannot stand on is a part of its own.
+  Int32List _label() {
+    final width = map.width;
+    final labels = Int32List(grid._cells)..fillRange(0, grid._cells, -1);
+    final stack = <int>[];
+    var next = 0;
+    for (var seed = 0; seed < grid._cells; seed++) {
+      if (labels[seed] != -1) continue;
+      labels[seed] = next;
+      if (_standing(seed) != 0) stack.add(seed);
+      while (stack.isNotEmpty) {
+        final cell = stack.removeLast();
+        final x = cell % width;
+        final y = cell ~/ width;
+        for (var dy = -1; dy <= 1; dy++) {
+          final ny = y + dy;
+          if (ny < 0 || ny >= map.depth) continue;
+          for (var dx = -1; dx <= 1; dx++) {
+            final nx = x + dx;
+            if ((dx == 0 && dy == 0) || nx < 0 || nx >= width) continue;
+            final other = ny * width + nx;
+            if (labels[other] != -1 || _standing(other) == 0) continue;
+            if (_steps(cell, other, dx != 0 && dy != 0) ||
+                _steps(other, cell, dx != 0 && dy != 0)) {
+              labels[other] = next;
+              stack.add(other);
+            }
+          }
+        }
+      }
+      next++;
+    }
+    return labels;
+  }
+
+  /// Whether this mover passes the step from [cell] to its neighbour
+  /// [next], as [_search] prices it.
+  bool _steps(int cell, int next, bool diagonal) {
+    final width = map.width;
+    final modes = diagonal
+        ? _standing((next ~/ width) * width + cell % width) &
+              _standing((cell ~/ width) * width + next % width)
+        : 0xFFFFFFFF;
+    if (modes == 0) return false;
+    final length = diagonal ? map.cellSizeM * math.sqrt2 : map.cellSizeM;
+    final slope =
+        math.atan2(grid._heights[next] - grid._heights[cell], length) *
+        180 /
+        math.pi;
+    return _half(cell, slope, entering: false, modes: modes) !=
+            double.infinity &&
+        _half(next, slope, entering: true, modes: modes) != double.infinity;
   }
 
   int _index(CellRef ref) {
