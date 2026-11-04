@@ -26,6 +26,21 @@ final class GroundGrid {
     }
   }
 
+  /// A grid of its own with [grid]'s arrays copied and no search on it:
+  /// what a battle takes when its world first changes (copy on write).
+  new copy(GroundGrid grid)
+    : _map = grid._map,
+      rules = grid.rules,
+      _cells = grid._cells {
+    _heights = Float64List.fromList(grid._heights);
+    _blocked = Uint8List.fromList(grid._blocked);
+    for (final MapEntry(:key, :value) in grid._terrains.entries) {
+      _terrains[key] = Uint16List.fromList(value);
+    }
+    _terrainNames.addAll(grid._terrainNames);
+    _terrainIndex.addAll(grid._terrainIndex);
+  }
+
   NavigationMap _map;
 
   /// The map, as of the last [apply].
