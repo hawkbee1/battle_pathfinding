@@ -156,6 +156,66 @@ void main() {
       );
     });
 
+    test('MAP-17 a flyer does not cross ground above its altitude limit', () {
+      // A ridge 100 m high across the map, under a limit of 50 m.
+      final map = NavigationFixture.parse(
+        'cell 10\nlegend g grass\nterrain\n'
+        '${List.filled(5, '  g g g g g').join('\n')}\n'
+        'heights\n  0 0 0 0 0\n  0 0 0 0 0\n  100 100 100 100 100\n'
+        '  0 0 0 0 0\n  0 0 0 0 0\n',
+      );
+      final search = GroundSearch(
+        map: map,
+        cost: fixtureCost,
+        mover: const PathMover(apPerM: 1, modes: ['flying']),
+        rules: const PathRules(altitudeLimitM: 50),
+      );
+
+      expect(search.exact(const CellRef(0, 0), const CellRef(0, 4)), isNull);
+    });
+
+    test('searches the whole ground at once with a corridor wider than the '
+        'map', () {
+      final map = _flat(12, 12, (x, y) => 'g', header: 'legend g grass');
+      final search = _search(map, _foot);
+      const from = CellRef(1, 1);
+      const to = CellRef(10, 10);
+
+      expect(
+        search.fast(from, to, blockSize: 4, corridor: 8)!.cost,
+        closeTo(search.exact(from, to)!.cost, 1e-9),
+      );
+    });
+
+    test('answers an unreachable goal at once, and again after a change '
+        'opens the way', () {
+      // A wall closes the map's south half off entirely.
+      var map = _flat(
+        64,
+        48,
+        (x, y) => y == 24 ? 'w' : 'g',
+        header: 'legend g grass\nlegend w grass wall',
+      );
+      final grid = GroundGrid(map: map);
+      final search = GroundSearch.on(grid, cost: fixtureCost, mover: _foot);
+      const from = CellRef(2, 2);
+      const to = CellRef(2, 46);
+
+      expect(search.fast(from, to, blockSize: 8), isNull);
+      expect(search.lastSettled, lessThan(64 * 24));
+
+      final (opened, touched) = applyChange(
+        map,
+        const ObjectDestroyed(CellRef(40, 24), 'wall'),
+      );
+      map = opened;
+      search.apply(map, touched);
+      expect(
+        search.fast(from, to, blockSize: 8)!.cells,
+        contains(const CellRef(40, 24)),
+      );
+    });
+
     test('falls back to the whole ground when the blocks give no path', () {
       // The lake covers most of its blocks; one column of bridges crosses
       // it, too thin for the block search but enough for foot units.
@@ -247,6 +307,32 @@ void _sharedGridTests() {
           );
         }
       }
+    });
+
+    test('MAP-06 a copy takes changes of its own and leaves the original '
+        'alone', () {
+      var map = _flat(20, 30, (x, y) => 'g', header: 'legend g grass');
+      final grid = GroundGrid(map: map);
+      final shared = GroundSearch.on(grid, cost: fixtureCost, mover: _foot);
+      const from = CellRef(2, 2);
+      const to = CellRef(2, 27);
+      final straight = shared.fast(from, to)!.cost;
+
+      final copy = GroundGrid.copy(grid);
+      final own = GroundSearch.on(copy, cost: fixtureCost, mover: _foot);
+      for (var x = 0; x < 19; x++) {
+        final (next, touched) = applyChange(
+          map,
+          ObjectBuilt(CellRef(x, 10), 'wall'),
+        );
+        map = next;
+        own.apply(map, touched);
+      }
+
+      expect((grid.searches, copy.searches), (1, 1));
+      expect(copy.modes, equals(grid.modes));
+      expect(own.fast(from, to)!.cost, greaterThan(straight));
+      expect(shared.fast(from, to)!.cost, closeTo(straight, 1e-9));
     });
 
     test('MAP-06 a world change applied through one search reaches every '

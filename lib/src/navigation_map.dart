@@ -126,6 +126,10 @@ final class NavigationMap {
          craterDepths: _sampleCraters(craters, cellSizeM, width, depth),
        );
 
+  /// The authored [objects] and [constructions] as a base, with
+  /// [changedObjects] and [changedConstructions] on top: a change copies
+  /// only these (deferred from M3.6).
+
   new _({
     required this.cellSizeM,
     required this.width,
@@ -138,8 +142,12 @@ final class NavigationMap {
     required List<SurfaceLink> links,
     required this.craters,
     required this._craterDepths,
-  }) : objects = Map.unmodifiable(objects),
-       constructions = Map.unmodifiable(constructions),
+    Map<CellRef, Set<String>> changedObjects = const {},
+    Map<CellRef, Set<String>> changedConstructions = const {},
+  }) : _baseObjects = Map.unmodifiable(objects),
+       _baseConstructions = Map.unmodifiable(constructions),
+       _changedObjects = Map.unmodifiable(changedObjects),
+       _changedConstructions = Map.unmodifiable(changedConstructions),
        links = List.unmodifiable(links) {
     if (ground.length != width * depth) {
       throw ArgumentError.value(
@@ -161,6 +169,35 @@ final class NavigationMap {
     Map<CellRef, Set<String>>? objects,
     Map<CellRef, Set<String>>? constructions,
     List<SurfaceLink>? links,
+  }) => _copy(
+    objects: objects ?? this.objects,
+    constructions: constructions ?? this.constructions,
+    links: links ?? this.links,
+  );
+
+  /// This map with [names] as the objects on [cell]: only the changed
+  /// cells are copied.
+  NavigationMap withObjectsAt(CellRef cell, Set<String> names) => _copy(
+    changedObjects: {..._changedObjects, cell: Set.unmodifiable(names)},
+  );
+
+  /// This map with [names] as the constructions on [cell]: only the
+  /// changed cells are copied.
+  NavigationMap withConstructionsAt(CellRef cell, Set<String> names) => _copy(
+    changedConstructions: {
+      ..._changedConstructions,
+      cell: Set.unmodifiable(names),
+    },
+  );
+
+  NavigationMap _copy({
+    Map<CellRef, Set<String>>? objects,
+    Map<CellRef, Set<String>>? constructions,
+    Map<CellRef, Set<String>>? changedObjects,
+    Map<CellRef, Set<String>>? changedConstructions,
+    List<SurfaceLink>? links,
+    List<Crater>? craters,
+    Map<(int, int), double>? craterDepths,
   }) => NavigationMap._(
     cellSizeM: cellSizeM,
     width: width,
@@ -168,11 +205,17 @@ final class NavigationMap {
     ground: ground,
     waterTerrains: waterTerrains,
     islands: islands,
-    objects: objects ?? this.objects,
-    constructions: constructions ?? this.constructions,
+    objects: objects ?? _baseObjects,
+    constructions: constructions ?? _baseConstructions,
+    changedObjects: objects != null
+        ? const {}
+        : changedObjects ?? _changedObjects,
+    changedConstructions: constructions != null
+        ? const {}
+        : changedConstructions ?? _changedConstructions,
     links: links ?? this.links,
-    craters: craters,
-    craterDepths: _craterDepths,
+    craters: craters ?? this.craters,
+    craterDepths: craterDepths ?? _craterDepths,
   );
 
   /// This map with [crater] dug: only the cells it covers are sampled
@@ -185,16 +228,7 @@ final class NavigationMap {
         crater.depthAt(cell.$1, cell.$2, cellSizeM),
       );
     }
-    return NavigationMap._(
-      cellSizeM: cellSizeM,
-      width: width,
-      depth: depth,
-      ground: ground,
-      waterTerrains: waterTerrains,
-      islands: islands,
-      objects: objects,
-      constructions: constructions,
-      links: links,
+    return _copy(
       craters: List.unmodifiable([...craters, crater]),
       craterDepths: Map.unmodifiable(depths),
     );
@@ -218,11 +252,37 @@ final class NavigationMap {
   /// The floating islands' cells, by island name, then by column and row.
   final Map<String, Map<(int, int), NavCell>> islands;
 
-  /// Objects on cells (trees, buildings, walls), by cell.
-  final Map<CellRef, Set<String>> objects;
+  final Map<CellRef, Set<String>> _baseObjects;
+  final Map<CellRef, Set<String>> _baseConstructions;
+  final Map<CellRef, Set<String>> _changedObjects;
+  final Map<CellRef, Set<String>> _changedConstructions;
 
-  /// Constructions on cells (a bridge over water, a road), by cell.
-  final Map<CellRef, Set<String>> constructions;
+  /// Objects on cells (trees, buildings, walls), by cell, the changes
+  /// included. Built on first use; [objectsAt] reads one cell at once.
+  late final Map<CellRef, Set<String>> objects = _merged(
+    _baseObjects,
+    _changedObjects,
+  );
+
+  /// Constructions on cells (a bridge over water, a road), by cell, the
+  /// changes included. Built on first use; [constructionsAt] reads one cell
+  /// at once.
+  late final Map<CellRef, Set<String>> constructions = _merged(
+    _baseConstructions,
+    _changedConstructions,
+  );
+
+  static Map<CellRef, Set<String>> _merged(
+    Map<CellRef, Set<String>> base,
+    Map<CellRef, Set<String>> changed,
+  ) => changed.isEmpty
+      ? base
+      : Map.unmodifiable({
+          for (final MapEntry(:key, :value) in base.entries)
+            if (!changed.containsKey(key)) key: value,
+          for (final MapEntry(:key, :value) in changed.entries)
+            if (value.isNotEmpty) key: value,
+        });
 
   /// Bridges and ladders between cells.
   final List<SurfaceLink> links;
@@ -256,10 +316,12 @@ final class NavigationMap {
   }
 
   /// The objects on [ref].
-  Set<String> objectsAt(CellRef ref) => objects[ref] ?? const {};
+  Set<String> objectsAt(CellRef ref) =>
+      _changedObjects[ref] ?? _baseObjects[ref] ?? const {};
 
   /// The constructions on [ref].
-  Set<String> constructionsAt(CellRef ref) => constructions[ref] ?? const {};
+  Set<String> constructionsAt(CellRef ref) =>
+      _changedConstructions[ref] ?? _baseConstructions[ref] ?? const {};
 
   /// The horizontal distance between the centres of two neighbour cells:
   /// one cell side, or its diagonal.
